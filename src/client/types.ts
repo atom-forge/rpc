@@ -2,6 +2,14 @@ import {z} from "zod";
 import type {Middleware} from "../util/pipeline.js";
 import type {UnwrappedPromise} from "../util/types.js";
 import type {ClientContext} from "./client-context.js";
+import {RPC_ERROR_KEY} from "../util/constants.js";
+import type {RpcResponse} from "./rpc-response.js";
+export type {RpcResponse};
+
+type RpcErrorKey = typeof RPC_ERROR_KEY;
+type RpcErrorShape = {[K in RpcErrorKey]: string};
+type ExtractSuccess<R> = R extends RpcErrorShape ? never : R;
+type ExtractErrors<R> = R extends RpcErrorShape ? R : never;
 
 /**
  * Represents a middleware function that operates on the client context during
@@ -102,7 +110,7 @@ export interface RpcMethodDescriptor {
 type MappedApi<T> = {
 	[K in keyof T]: T[K] extends RpcMethodDescriptor
 		? // RPC metódus -> átalakítjuk hívható metódussá
-		CallableRpcMethod<GetArgs<T[K]>, GetRet<T[K]>, GetRpcType<T[K]>>
+		CallableRpcMethod<GetArgs<T[K]>, GetSuccessRet<T[K]>, GetErrorRet<T[K]>, GetRpcType<T[K]>>
 		: T[K] extends object
 			? T[K] extends Function | RpcMethodDescriptor
 				? never
@@ -138,10 +146,17 @@ type GetArgs<T> = T extends { zodSchema: z.ZodSchema<infer ZodArgs> }
 		: never;
 
 /**
- *  Extract the RET type from the return value of the implementation function.
+ *  Extract the success return type (non-error returns).
  */
-type GetRet<T> = T extends { implementation: (args: any) => infer R }
-	? UnwrappedPromise<R>
+type GetSuccessRet<T> = T extends { implementation: (args: any) => infer R }
+	? ExtractSuccess<UnwrappedPromise<R>>
+	: never;
+
+/**
+ *  Extract the error return type (rpc error objects).
+ */
+type GetErrorRet<T> = T extends { implementation: (args: any) => infer R }
+	? ExtractErrors<UnwrappedPromise<R>>
 	: never;
 
 /**
@@ -154,30 +169,13 @@ type GetRpcType<T> = T extends RpcMethodDescriptor ? T["rpcType"] : never;
  */
 type CallableRpcMethod<
 	ARGS,
-	RET,
+	TSuccess,
+	TError extends RpcErrorShape,
 	Type extends "query" | "command" | "get",
 > = Type extends "command"
-	? {
-		$command: (args: ARGS, options?: CallOptions) => Promise<RET>;
-		$command_ctx: (
-			args: ARGS,
-			options?: CallOptions,
-		) => Promise<ClientContext<RET>>;
-	}
+	? {$command: (args: ARGS, options?: CallOptions) => Promise<RpcResponse<TSuccess, TError>>}
 	: Type extends "query"
-		? {
-			$query: (args: ARGS, options?: CallOptions) => Promise<RET>;
-			$query_ctx: (
-				args: ARGS,
-				options?: CallOptions,
-			) => Promise<ClientContext<RET>>;
-		}
+		? {$query: (args: ARGS, options?: CallOptions) => Promise<RpcResponse<TSuccess, TError>>}
 		: Type extends "get"
-			? {
-				$get: (args: ARGS, options?: CallOptions) => Promise<RET>;
-				$get_ctx: (
-					args: ARGS,
-					options?: CallOptions,
-				) => Promise<ClientContext<RET>>;
-			}
+			? {$get: (args: ARGS, options?: CallOptions) => Promise<RpcResponse<TSuccess, TError>>}
 			: never;

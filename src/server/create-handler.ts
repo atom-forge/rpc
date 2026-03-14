@@ -1,6 +1,7 @@
 import type {RequestEvent} from "@sveltejs/kit";
 import {Packr} from "msgpackr";
 import {z} from "zod";
+import {RPC_ERROR_KEY} from "../util/constants.js";
 import {pipeline} from "../util/pipeline.js";
 import {getMiddlewares} from "./middleware.js";
 import {ServerContext} from "./server-context.js";
@@ -113,7 +114,7 @@ export function createHandler<
 		} catch (e) {
 			if (e instanceof ParseError)
 				return new Response(e.message, {status: 400});
-			console.error("[tango] Unexpected error during request parsing:", e);
+			console.error("[rpc] Unexpected error during request parsing:", e);
 			return new Response("Internal server error", {status: 500});
 		}
 
@@ -126,14 +127,15 @@ export function createHandler<
 			return makeResponse(result, ctx);
 		} catch (e) {
 			if (e instanceof z.ZodError) {
-				ctx.headers.response.set("X-Tango-Validation-Error", "true");
 				ctx.cache.set(0);
-				ctx.status.set(422);
-				return makeResponse(e.issues, ctx);
+				return makeResponse({[RPC_ERROR_KEY]: "INVALID_ARGUMENT", issues: e.issues}, ctx);
 			}
-			//TODO: Log error
-			console.error("[tango] Unhandled error in RPC handler:", e);
-			return new Response(`Internal server error`, {status: 500});
+			console.error("[rpc] Unhandled error in RPC handler:", e);
+			const correlationId = crypto.randomUUID();
+			return new Response(
+				JSON.stringify({[RPC_ERROR_KEY]: "INTERNAL_ERROR", correlationId}),
+				{status: 500, headers: {"Content-Type": "application/json"}},
+			);
 		}
 	};
 	return [handler, apiDefinition];
@@ -150,7 +152,7 @@ function makeResponse(result: any, ctx: ServerContext): Response {
 	const prefersJson = ctx.event.request.headers
 		.get("Accept")
 		?.includes("application/json");
-	ctx.headers.response.set("X-Tango-Execution-Time", `${ctx.elapsedTime}`);
+	ctx.headers.response.set("x-atom-forge-rpc-exec-time", `${ctx.elapsedTime}`);
 	ctx.headers.response.set(
 		"Content-Type",
 		prefersJson ? "application/json" : "application/msgpack",

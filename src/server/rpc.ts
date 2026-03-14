@@ -1,11 +1,13 @@
 import {z} from "zod";
+import {invalidArgument, internalError, permissionDenied} from "./errors.js";
+import {RPC_ERROR_KEY} from "../util/constants.js";
 import {addMiddleware} from "./middleware.js";
 import type {ServerContext} from "./server-context.js";
 import type {RpcMethodImplementationDescriptor, ServerMiddleware} from "./types.js";
 
 type RpcType = "query" | "command" | "get";
 
-export function tangoFactory<
+export function rpcFactory<
 	SERVER_CONTEXT extends ServerContext = ServerContext,
 >() {
 	function makeDescriptor<Type extends RpcType, ARGS, RET>(
@@ -65,7 +67,20 @@ export function tangoFactory<
 
 		zod: <TArgsSchema extends Record<string, z.ZodTypeAny>>(schemaDef: TArgsSchema) =>
 			makeZodMethodSet(schemaDef),
+
+		error: {
+			make<TCode extends string, TResult extends Record<string, any> = Record<never, never>>(
+				code: TCode,
+				message?: string,
+				result?: TResult,
+			): {[K in typeof RPC_ERROR_KEY]: TCode} & {message?: string} & TResult {
+				return {[RPC_ERROR_KEY]: code, ...(message !== undefined && {message}), ...(result ?? {})} as any;
+			},
+			invalidArgument,
+			permissionDenied,
+			internalError,
+		},
 	};
 }
 
-export const tango = tangoFactory();
+export const rpc = rpcFactory();

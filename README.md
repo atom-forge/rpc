@@ -1,33 +1,33 @@
-# Tango
+# Rpc
 
-Tango is a full-stack RPC (Remote Procedure Call) framework for TypeScript projects. It simplifies the communication between the client and the server by providing a type-safe API.
+Rpc is a full-stack RPC (Remote Procedure Call) framework for TypeScript projects. It simplifies the communication between the client and the server by providing a type-safe API.
 
 ## Installation
 
 ```bash
-npm install @atom-forge/tango-rpc
-pnpm add @atom-forge/tango-rpc
-yarn add @atom-forge/tango-rpc
-bun add @atom-forge/tango-rpc
+npm install @atom-forge/rpc
+pnpm add @atom-forge/rpc
+yarn add @atom-forge/rpc
+bun add @atom-forge/rpc
 ```
 
 ## Core Concept: End-to-End Type Safety
 
-Tango's main feature is providing end-to-end type safety between your server and client. You define your API on the server, and then share the type of that definition with the client. This gives you autocompletion and type checking for your API calls.
+Rpc's main feature is providing end-to-end type safety between your server and client. You define your API on the server, and then share the type of that definition with the client. This gives you autocompletion and type checking for your API calls.
 
 **1. Define your API and create a handler on the server:**
 
 ```typescript
 // src/hooks.server.ts (or your server's entry point)
-import { createHandler, tango } from '@atom-forge/tango-rpc';
+import { createHandler, rpc } from '@atom-forge/rpc';
 
 const api = {
   posts: {
-    list: tango.query(async ({ page }: { page: number }, ctx) => {
+    list: rpc.query(async ({ page }: { page: number }, ctx) => {
       // ... fetch posts
       return { posts: [{ id: 1, title: 'Hello' }] };
     }),
-    create: tango.command(async ({ title }: { title: string }) => {
+    create: rpc.command(async ({ title }: { title: string }) => {
       // ... create post
       return { success: true };
     }),
@@ -42,15 +42,17 @@ export const [handler, definition] = createHandler(api);
 **2. Use the type on the client:**
 
 ```typescript
-// src/lib/client/tango.ts
-import { createClient } from '@atom-forge/tango-rpc';
+// src/lib/client/rpc.ts
+import { createClient } from '@atom-forge/rpc';
 import { definition } from '../../hooks.server'; // Import the definition object
 
-const [api, cfg] = createClient<typeof definition>('/api/tango');
+const [api, cfg] = createClient<typeof definition>('/api/rpc');
 
-// Autocompletion and type checking for arguments and return types!
-const result = await api.posts.list.$query({ page: 1 });
-// result is typed as { posts: { id: number, title: string }[] }
+// Every call returns a RpcResponse
+const res = await api.posts.list.$query({ page: 1 });
+if (res.isOK()) {
+  console.log(res.result); // typed as { posts: { id: number, title: string }[] }
+}
 
 await api.posts.create.$command({ title: 'My New Post' });
 
@@ -59,7 +61,7 @@ export default api;
 
 ## Communication Protocol
 
-Tango uses **MessagePack** as its primary communication protocol for efficiency and performance. For clients that do not support MessagePack, it can fall back to **JSON**.
+Rpc uses **MessagePack** as its primary communication protocol for efficiency and performance. For clients that do not support MessagePack, it can fall back to **JSON**.
 
 - **`$command`**: Sends data in the request body, encoded with MessagePack (`application/msgpack`). Plain JSON (`application/json`) is also accepted by the server.
 - **`$query`**: Sends data in the URL's query string, encoded with MessagePack and Base64. This is the recommended method for queries.
@@ -73,22 +75,21 @@ Every response includes the following headers:
 
 | Header | Description |
 |---|---|
-| `X-Tango-Execution-Time` | Server-side execution time in milliseconds. |
-| `X-Tango-Validation-Error` | Set to `"true"` when a Zod validation error occurs (status 422). |
+| `x-atom-forge-rpc-exec-time` | Server-side execution time in milliseconds. |
 
 ## Client-side Usage
 
 ### `createClient`
 
-The `createClient` function is used to create a new API client. The way you call an endpoint on the client (`$query` or `$get`) must match how it was defined on the server (`tango.query` or `tango.get`).
+The `createClient` function is used to create a new API client. The way you call an endpoint on the client (`$query` or `$get`) must match how it was defined on the server (`rpc.query` or `rpc.get`).
 
 ```typescript
-import { createClient } from '@atom-forge/tango-rpc';
+import { createClient } from '@atom-forge/rpc';
 import { definition } from '../../hooks.server'; // Import the definition object from your server
 
-const [api, cfg] = createClient<typeof definition>('/api/tango');
+const [api, cfg] = createClient<typeof definition>('/api/rpc');
 
-// If the server endpoint is defined with tango.query:
+// If the server endpoint is defined with rpc.query:
 const result = await api.posts.list.$query({ page: 1 });
 
 // Example of calling a command
@@ -98,7 +99,7 @@ await api.posts.create.$command({ title: 'Hello World' });
 You can also enable debug logging for all calls made through the client:
 
 ```typescript
-const [api, cfg] = createClient<typeof definition>('/api/tango', { debug: true });
+const [api, cfg] = createClient<typeof definition>('/api/rpc', { debug: true });
 ```
 
 ### Call Options
@@ -123,18 +124,40 @@ const result = await api.posts.list.$query({ page: 1 }, {
 });
 ```
 
-### Accessing the Full Context (`_ctx` variants)
+### `RpcResponse`
 
-Each RPC method has a `_ctx` counterpart that returns the full `ClientContext` instead of just the result. This is useful when you need access to the response object or other context metadata.
+Every RPC call returns a `RpcResponse` with these members:
+
+| Member | Description |
+|---|---|
+| `res.isOK()` | `true` if the call succeeded |
+| `res.isError(code?)` | `true` if error; optionally checks a specific code |
+| `res.status` | `'OK'` on success, or the error code string |
+| `res.result` | Typed success data, or error details |
+| `res.ctx` | The full `ClientContext` for this call |
+
+**Error code format:**
+- Application-level errors: `'INVALID_ARGUMENT'`, `'PERMISSION_DENIED'`, custom codes, etc.
+- Transport errors: `'HTTP:401'`, `'HTTP:404'`, `'HTTP:500'`, etc.
+- Network errors: `'NETWORK_ERROR'`
 
 ```typescript
-const ctx = await api.posts.list.$query_ctx({ page: 1 });
-console.log(ctx.result);           // the typed result
-console.log(ctx.response?.status); // the raw Response
-console.log(ctx.elapsedTime);      // client-side elapsed time in ms
-```
+const res = await api.posts.create.$command({ title: 'Hello' });
 
-The available `_ctx` variants are: **`$command_ctx`**, **`$query_ctx`**, **`$get_ctx`**.
+if (res.isOK()) {
+  console.log(res.result);             // typed result
+} else if (res.isError('INVALID_ARGUMENT')) {
+  console.log(res.result.message);     // error details
+} else if (res.isError('HTTP:401')) {
+  // redirect to login
+} else {
+  console.log(res.status, res.result); // any other error
+}
+
+// Access context (response headers, elapsed time, etc.)
+console.log(res.ctx.response?.status);
+console.log(res.ctx.elapsedTime);
+```
 
 ### File Uploads
 
@@ -144,7 +167,7 @@ The available `_ctx` variants are: **`$command_ctx`**, **`$query_ctx`**, **`$get
 // Server-side
 const api = {
   posts: {
-    create: tango.command(async ({ title, cover }: { title: string; cover: File }) => {
+    create: rpc.command(async ({ title, cover }: { title: string; cover: File }) => {
       // cover is a File object
     }),
   },
@@ -167,7 +190,7 @@ For multiple files, use an array and suffix the key with `[]`:
 // Server-side
 const api = {
   media: {
-    upload: tango.command(async ({ files }: { files: File[] }) => { ... }),
+    upload: rpc.command(async ({ files }: { files: File[] }) => { ... }),
   },
 };
 
@@ -182,7 +205,7 @@ The `makeClientMiddleware` function is used to create a client-side middleware.
 > ⚠️ **Always `return await next()`** in your middleware. If you call `next()` without returning its result, the response will be lost and the caller will receive `undefined`.
 
 ```typescript
-import { makeClientMiddleware } from '@atom-forge/tango-rpc';
+import { makeClientMiddleware } from '@atom-forge/rpc';
 
 const loggerMiddleware = makeClientMiddleware(async (ctx, next) => {
   console.log('Request:', ctx.path, ctx.getArgs());
@@ -202,21 +225,21 @@ cfg.$ = loggerMiddleware;
 The `createHandler` function creates a request handler for your server and returns the handler and a typed API definition.
 
 ```typescript
-import { createHandler, tango } from '@atom-forge/tango-rpc';
+import { createHandler, rpc } from '@atom-forge/rpc';
 
 const api = {
   posts: {
     // This endpoint expects a $query call from the client
-    list: tango.query(async ({ page }, ctx) => {
+    list: rpc.query(async ({ page }, ctx) => {
       ctx.cache.set(60);
       return { posts: [] };
     }),
     // This endpoint expects a $get call from the client
-    getById: tango.get(async ({ id }, ctx) => {
+    getById: rpc.get(async ({ id }, ctx) => {
       return { id, title: 'Example Post' };
     }),
     // This endpoint expects a $command call from the client
-    create: tango.command(async ({ title }) => {
+    create: rpc.command(async ({ title }) => {
       // create a new post
     }),
   },
@@ -230,7 +253,7 @@ export const [handler, definition] = createHandler(api);
 You can provide a custom server context factory to inject your own properties (e.g. authenticated user) into every handler:
 
 ```typescript
-import { createHandler, ServerContext } from '@atom-forge/tango-rpc';
+import { createHandler, ServerContext } from '@atom-forge/rpc';
 
 class AppContext extends ServerContext {
   get user() {
@@ -243,26 +266,26 @@ export const [handler, definition] = createHandler(api, {
 });
 ```
 
-### `tango` object
+### `rpc` object
 
-The `tango` object provides methods for defining your API endpoints. The method you use on the server determines how the client must call the endpoint.
+The `rpc` object provides methods for defining your API endpoints. The method you use on the server determines how the client must call the endpoint.
 
-*   `tango.query`: Defines a query endpoint that expects arguments encoded with MessagePack. The client must use **`$query`**.
-*   `tango.get`: Defines a query endpoint that expects arguments as plain text in the URL. The client must use **`$get`**.
-*   `tango.command`: Defines a command endpoint. The client must use **`$command`**.
+*   `rpc.query`: Defines a query endpoint that expects arguments encoded with MessagePack. The client must use **`$query`**.
+*   `rpc.get`: Defines a query endpoint that expects arguments as plain text in the URL. The client must use **`$get`**.
+*   `rpc.command`: Defines a command endpoint. The client must use **`$command`**.
 
-#### `tangoFactory`
+#### `rpcFactory`
 
-If you use a custom server context (see above), use `tangoFactory` to create a typed `tango` instance so that `ctx` is properly typed in your handlers:
+If you use a custom server context (see above), use `rpcFactory` to create a typed `rpc` instance so that `ctx` is properly typed in your handlers:
 
 ```typescript
-import { tangoFactory } from '@atom-forge/tango-rpc';
+import { rpcFactory } from '@atom-forge/rpc';
 
-const tango = tangoFactory<AppContext>();
+const rpc = rpcFactory<AppContext>();
 
 const api = {
   posts: {
-    list: tango.query(async ({ page }, ctx) => {
+    list: rpc.query(async ({ page }, ctx) => {
       // ctx is typed as AppContext
       const user = ctx.user;
       return { posts: [] };
@@ -294,12 +317,12 @@ Every handler and server-side middleware receives a `ctx` object with the follow
 
 ### Caching
 
-Tango supports server-side caching for `GET` requests (both `tango.query` and `tango.get`). You can set the cache duration in seconds using the `ctx.cache.set()` method within your endpoint implementation.
+Rpc supports server-side caching for `GET` requests (both `rpc.query` and `rpc.get`). You can set the cache duration in seconds using the `ctx.cache.set()` method within your endpoint implementation.
 
 ```typescript
 const api = {
   posts: {
-    list: tango.query(async ({ page }, ctx) => {
+    list: rpc.query(async ({ page }, ctx) => {
       ctx.cache.set(60); // Cache the response for 60 seconds
       return { posts: [] };
     }),
@@ -309,43 +332,52 @@ const api = {
 
 ### Error Handling
 
-To send an error from the server, you can set the HTTP status code using `ctx.status` and return a value with the error details.
+Use the built-in error helpers to return application-level errors from handlers. These always produce a `200 OK` response with the `atomforge.rpc.error` key, so the client receives a typed `RpcResponse`.
 
 ```typescript
+import { rpc } from '@atom-forge/rpc';
+
 const api = {
   posts: {
-    get: tango.query(async ({ id }, ctx) => {
-      const post = await db.getPost(id);
-      if (!post) {
-        ctx.status.notFound(); // Sets the status to 404
-        return { error: 'Post not found' };
-      }
-      return post;
+    create: rpc.command(async ({ title }, ctx) => {
+      if (!ctx.event.locals.user) return rpc.error.permissionDenied();
+      if (title.length < 3) return rpc.error.invalidArgument({ message: 'Title too short' });
+      // ...
+      return { id: 1, title };
     }),
   },
 };
 ```
 
-### `zod` integration
-
-Tango has built-in support for `zod` for input validation. The package re-exports zod's `z` under the name **`tz`** ("tango-zod") to avoid potential version conflicts when your project uses a different version of zod.
+Use `rpc.error.make` for custom error codes:
 
 ```typescript
-import { tz } from '@atom-forge/tango-rpc';
-// tz is the same as z from zod, but guaranteed to be the version tango was built with
+return rpc.error.make('POST_ALREADY_EXISTS', 'This slug already exists', { slug: post.slug });
 ```
 
-If a validation fails, Tango will automatically return a `422 Unprocessable Entity` response with the `X-Tango-Validation-Error: true` header. The body of the response will contain an array of `ZodIssue` objects.
+| Method | Error code | Use when |
+|---|---|---|
+| `rpc.error.invalidArgument(details?)` | `INVALID_ARGUMENT` | Business logic validation (beyond Zod) |
+| `rpc.error.permissionDenied(details?)` | `PERMISSION_DENIED` | Authorization failure |
+| `rpc.error.internalError(details?)` | `INTERNAL_ERROR` | Handled internal failure (auto `correlationId`) |
+| `rpc.error.make(code, message?, result?)` | custom | Any custom error code |
+
+### `zod` integration
+
+Rpc has built-in support for `zod` for input validation. Install `zod` as a dependency of your project and import it directly.
+
+If validation fails, Rpc automatically returns an application-level error (`200 OK`) with code `INVALID_ARGUMENT` and the `ZodIssue` array in the `issues` field. The handler does not run.
 
 ```typescript
 // Server-side
-import { tango, tz } from '@atom-forge/tango-rpc';
+import { rpc } from '@atom-forge/rpc';
+import { z } from 'zod';
 
 const api = {
   posts: {
-    create: tango.zod({
-      title: tz.string().min(3, "Title must be at least 3 characters long."),
-      content: tz.string().min(10),
+    create: rpc.zod({
+      title: z.string().min(3, "Title must be at least 3 characters long."),
+      content: z.string().min(10),
     }).command(async ({ title, content }) => {
       // This code only runs if validation passes
     }),
@@ -353,25 +385,20 @@ const api = {
 };
 ```
 
-`tango.zod` also works with `query` and `get`:
+`rpc.zod` also works with `query` and `get`:
 
 ```typescript
-tango.zod({ id: tz.number() }).query(async ({ id }, ctx) => { ... })
-tango.zod({ id: tz.number() }).get(async ({ id }, ctx) => { ... })
+rpc.zod({ id: z.number() }).query(async ({ id }, ctx) => { ... })
+rpc.zod({ id: z.number() }).get(async ({ id }, ctx) => { ... })
 ```
 
-You can catch and handle these validation errors on the client.
+Handle validation errors on the client via `RpcResponse`:
 
 ```typescript
 // Client-side
-try {
-  await api.posts.create.$command({ title: 'Hi' });
-} catch (error: any) {
-  if (error.response?.status === 422) {
-    const validationErrors = await error.response.json();
-    // validationErrors is an array of ZodIssue objects
-    console.log(validationErrors); 
-  }
+const res = await api.posts.create.$command({ title: 'Hi' });
+if (res.isError('INVALID_ARGUMENT')) {
+  console.log(res.result.issues); // ZodIssue[]
 }
 ```
 
@@ -382,7 +409,7 @@ The `makeServerMiddleware` function is used to create a server-side middleware. 
 > ⚠️ **Always `return await next()`** in your middleware. If you call `next()` without returning its result, the handler's return value will be lost and the client will receive `undefined`.
 
 ```typescript
-import { makeServerMiddleware } from '@atom-forge/tango-rpc';
+import { makeServerMiddleware } from '@atom-forge/rpc';
 
 const authMiddleware = makeServerMiddleware(
   async (ctx, next) => {
@@ -394,28 +421,47 @@ const authMiddleware = makeServerMiddleware(
   },
   // Optional accessors attached to the middleware function itself
   {
-    admin: (ctx) => ctx.event.locals.user?.role === 'admin',
+    isAdmin: (ctx) => ctx.event.locals.user?.role === 'admin',
   }
 );
 ```
 
-### Applying Middleware with `tango.middleware`
-
-Use `tango.middleware()` to attach one or more server middlewares to an endpoint:
+The accessor functions are attached directly to the middleware function object, keeping the middleware and its associated helpers co-located. Call them from within endpoint implementations by passing `ctx`:
 
 ```typescript
-import { tango, tz } from '@atom-forge/tango-rpc';
+const api = {
+  admin: {
+    deletePost: rpc.middleware(authMiddleware).command(async ({ id }, ctx) => {
+      if (!authMiddleware.isAdmin(ctx)) {
+        ctx.status.forbidden();
+        return { error: 'Admin only' };
+      }
+      // proceed...
+    }),
+  },
+};
+```
+
+This pattern keeps the middleware's knowledge — what constitutes an `isAdmin` check — in one place rather than repeating the logic in every endpoint.
+
+### Applying Middleware with `rpc.middleware`
+
+Use `rpc.middleware()` to attach one or more server middlewares to an endpoint:
+
+```typescript
+import { rpc } from '@atom-forge/rpc';
+import { z } from 'zod';
 
 // Apply middleware to a specific endpoint
 const api = {
   posts: {
-    create: tango.middleware(authMiddleware).command(async ({ title }) => {
+    create: rpc.middleware(authMiddleware).command(async ({ title }) => {
       // ...
     }),
     // Combine middleware with zod validation
-    update: tango.middleware(authMiddleware).zod({
-      id: tz.number(),
-      title: tz.string(),
+    update: rpc.middleware(authMiddleware).zod({
+      id: z.number(),
+      title: z.string(),
     }).command(async ({ id, title }) => {
       // ...
     }),
@@ -427,12 +473,12 @@ You can also attach middleware to any existing object with `.on()`:
 
 ```typescript
 const postsApi = {
-  list: tango.query(async () => { ... }),
-  create: tango.command(async () => { ... }),
+  list: rpc.query(async () => { ... }),
+  create: rpc.command(async () => { ... }),
 };
 
 // Attach authMiddleware to the whole postsApi group
-tango.middleware(authMiddleware).on(postsApi);
+rpc.middleware(authMiddleware).on(postsApi);
 
 const api = { posts: postsApi };
 ```

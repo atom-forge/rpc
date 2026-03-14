@@ -1,18 +1,16 @@
 import {Packr} from "msgpackr";
+import {RPC_ERROR_KEY} from "../util/constants.js";
 import {pipeline} from "../util/pipeline.js";
 import {ClientContext, WritableClientContext} from "./client-context.js";
+import {RpcResponse} from "./rpc-response.js";
 import type {ApiClientDefinition, CallOptions, ClientMiddleware, MiddlewareConfig, OnProgress,} from "./types.js";
 import {camelToKebabCase} from "../util/string.js";
 
 const rpcMethods = ["$command", "$query", "$get"];
-const rpcContextMethods = ["$command_ctx", "$query_ctx", "$get_ctx"];
 const rpcMethodTypeMap = {
     $command: "command",
     $query: "query",
     $get: "get",
-    $command_ctx: "command",
-    $query_ctx: "query",
-    $get_ctx: "get",
 };
 const packr = new Packr({structuredClone: true, useRecords: true});
 
@@ -59,10 +57,9 @@ export function createClient<T>(
                 get(_target, prop) {
                     if (typeof prop !== "string") return undefined;
 
-                    const isContextRequested = rpcContextMethods.includes(prop);
                     const isResultRequested = rpcMethods.includes(prop);
 
-                    if (isResultRequested || isContextRequested) {
+                    if (isResultRequested) {
                         const rpcType = rpcMethodTypeMap[
                             prop as keyof typeof rpcMethodTypeMap
                             ] as "command" | "query" | "get";
@@ -100,7 +97,7 @@ export function createClient<T>(
                                 return result;
                             }).catch((e) => {
                                 if (isDebug) {
-                                    console.log("ERR:", e);
+                                    console.log("PIPELINE ERR:", e);
                                     console.groupEnd();
                                 }
                                 throw e;
@@ -111,7 +108,7 @@ export function createClient<T>(
                                 console.log("RES:", ctx.result);
                                 if (ctx.response) {
                                     console.log(
-                                        `%c${duration} %cms / %c${parseFloat(ctx.response.headers.get("X-Tango-Execution-Time") || "0").toFixed(2)} %cms`,
+                                        `%c${duration} %cms / %c${parseFloat(ctx.response.headers.get("x-atom-forge-rpc-exec-time") || "0").toFixed(2)} %cms`,
                                         "font-weight:800;",
                                         "font-weight:200;",
                                         "font-weight:800;",
@@ -139,7 +136,9 @@ export function createClient<T>(
                                 }
                             }
 
-                            return isContextRequested ? ctx : ctx.result;
+                            const rpcResponse = ctx.result as RpcResponse<any>;
+                            rpcResponse._attachCtx(ctx);
+                            return rpcResponse;
                         };
                     }
 
@@ -155,7 +154,7 @@ export function createClient<T>(
     return [api, cfg];
 }
 
-async function call(baseUrl: string, ctx: ClientContext) {
+async function call(baseUrl: string, ctx: ClientContext): Promise<RpcResponse<any, any>> {
     const args = ctx.args;
     const uploads = new Map<string, File | File[]>();
 
@@ -246,43 +245,53 @@ async function call(baseUrl: string, ctx: ClientContext) {
             break;
     }
 
-    const response = hasProgress
-        ? await fetchWithXhr(url, method, body, headers, onProgress, signal)
-        : await fetch(url, {
-            method,
-            headers,
-            body,
-            signal,
-            credentials: "include",
-            window: null,
-        });
+    let response: Response;
+    try {
+        response = hasProgress
+            ? await fetchWithXhr(url, method, body, headers, onProgress, signal)
+            : await fetch(url, {
+                method,
+                headers,
+                body,
+                signal,
+                credentials: "include",
+                window: null,
+            });
+    } catch (e) {
+        return RpcResponse.error("NETWORK_ERROR", {message: (e as Error).message});
+    }
 
     (ctx as WritableClientContext)._response = response;
 
     const buffer = await response.arrayBuffer();
 
-    // Handle empty responses
     if (buffer.byteLength === 0) {
-        if (response.status === 204) return null;
-        if (!response.ok) throw new Error(`Server error: ${response.status} ${response.statusText}`);
-        throw new Error('Unexpected empty response from server for successful request');
+        if (response.ok) return RpcResponse.ok(null);
+        return RpcResponse.error(`HTTP:${response.status}`, null);
     }
 
     let unpacked: any;
     try {
         unpacked = packr.unpack(new Uint8Array(buffer));
-    } catch (error) {
-        throw new Error(`Failed to decode server response: ${(error as Error).message}`);
+    } catch {
+        try {
+            unpacked = JSON.parse(new TextDecoder().decode(buffer));
+        } catch {
+            unpacked = null;
+        }
+    }
+
+    const errorCode = unpacked?.[RPC_ERROR_KEY];
+    if (errorCode) {
+        const {[RPC_ERROR_KEY]: _, ...rest} = unpacked;
+        return RpcResponse.error(errorCode, rest);
     }
 
     if (!response.ok) {
-        const err = new Error(`Server error: ${response.status} ${response.statusText}`) as any;
-        err.response = response;
-        err.data = unpacked;
-        throw err;
+        return RpcResponse.error(`HTTP:${response.status}`, unpacked);
     }
 
-    return unpacked;
+    return RpcResponse.ok(unpacked);
 }
 
 /**

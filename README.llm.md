@@ -1,24 +1,23 @@
-# Tango — LLM Reference
+# Rpc — LLM Reference
 
-Tango is a full-stack TypeScript RPC framework for SvelteKit. It provides end-to-end type safety between server and client using MessagePack as the primary transport protocol.
+Rpc is a full-stack TypeScript RPC framework for SvelteKit. It provides end-to-end type safety between server and client using MessagePack as the primary transport protocol.
 
 ## Package
 
 ```bash
-npm install @atom-forge/tango-rpc
-pnpm add @atom-forge/tango-rpc
-yarn add @atom-forge/tango-rpc
-bun add @atom-forge/tango-rpc
+npm install @atom-forge/rpc
+pnpm add @atom-forge/rpc
+yarn add @atom-forge/rpc
+bun add @atom-forge/rpc
 ```
 
 ## Exports
 
 ```typescript
-import { createClient, makeClientMiddleware }    from '@atom-forge/tango-rpc'; // client
-import { createHandler, tango, tangoFactory, makeServerMiddleware, tz } from '@atom-forge/tango-rpc'; // server
+import { createClient, makeClientMiddleware, RpcResponse } from '@atom-forge/rpc'; // client
+import { createHandler, rpc, rpcFactory, makeServerMiddleware, invalidArgument, permissionDenied, internalError } from '@atom-forge/rpc'; // server
+import { z } from 'zod'; // install zod as a peer dependency in your project
 ```
-
-- `tz` is zod's `z` re-exported under this name to avoid version conflicts. Use `tz` instead of importing `z` from `zod` directly when working with tango schemas.
 
 ---
 
@@ -26,31 +25,32 @@ import { createHandler, tango, tangoFactory, makeServerMiddleware, tz } from '@a
 
 ### Defining endpoints
 
-Use the `tango` singleton (or a typed instance from `tangoFactory<CTX>()`) to define endpoints:
+Use the `rpc` singleton (or a typed instance from `rpcFactory<CTX>()`) to define endpoints:
 
 ```typescript
-tango.query(async (args, ctx) => result)    // GET /path?args=<msgpack+base64>
-tango.get(async (args, ctx) => result)      // GET /path?key=value (plain strings)
-tango.command(async (args, ctx) => result)  // POST /path (body: msgpack or JSON)
+rpc.query(async (args, ctx) => result)    // GET /path?args=<msgpack+base64>
+rpc.get(async (args, ctx) => result)      // GET /path?key=value (plain strings)
+rpc.command(async (args, ctx) => result)  // POST /path (body: msgpack or JSON)
 ```
 
-Add Zod validation (`tz` is zod's `z`, re-exported from `@atom-forge/tango-rpc`):
+Add Zod validation (import `z` from `zod` directly):
 
 ```typescript
-import { tango, tz } from '@atom-forge/tango-rpc';
+import { rpc } from '@atom-forge/rpc';
+import { z } from 'zod';
 
-tango.zod({ id: tz.number(), name: tz.string() }).query(...)
-tango.zod({ ... }).command(...)
-tango.zod({ ... }).get(...)
+rpc.zod({ id: z.number(), name: z.string() }).query(...)
+rpc.zod({ ... }).command(...)
+rpc.zod({ ... }).get(...)
 ```
 
 Add server middleware:
 
 ```typescript
-tango.middleware(mw).query(...)
-tango.middleware(mw).command(...)
-tango.middleware(mw).zod({ ... }).command(...)
-tango.middleware(mw).on(existingObject)  // attach to any object
+rpc.middleware(mw).query(...)
+rpc.middleware(mw).command(...)
+rpc.middleware(mw).zod({ ... }).command(...)
+rpc.middleware(mw).on(existingObject)  // attach to any object
 ```
 
 ### `createHandler`
@@ -64,14 +64,14 @@ const [handler, definition] = createHandler(apiObject, {
 - `handler`: `(event: RequestEvent) => Promise<Response>` — wire this to your SvelteKit route.
 - `definition`: the same `apiObject`, typed. Export this and import its `typeof` on the client.
 - Accepted HTTP methods: `GET` for `query`/`get`, `POST` for `command`.
-- Accepted `Content-Type` for POST: `application/msgpack` (default), `application/json`, `multipart/form-data`.
+- Accepted `Content-Type` for POST: `application/msgpack` (default), `application/json`, `multipart/form-data`. Unknown `Content-Type` → `415 Unsupported Media Type`.
 
-### `tangoFactory`
+### `rpcFactory`
 
-Creates a typed `tango` instance bound to a custom context type:
+Creates a typed `rpc` instance bound to a custom context type:
 
 ```typescript
-const tango = tangoFactory<AppContext>();
+const rpc = rpcFactory<AppContext>();
 ```
 
 ### `makeServerMiddleware`
@@ -85,8 +85,17 @@ const mw = makeServerMiddleware(
     // ctx.status.unauthorized(); return { error: '...' };
     return await next(); // ✅ must return
   },
-  { optionalAccessor: (ctx) => someValue }  // attached to the function object
+  { isAdmin: (ctx) => ctx.event.locals.user?.role === 'admin' }  // attached to the function object
 );
+
+// Call accessors from endpoint implementations by passing ctx:
+const api = {
+  admin: {
+    deletePost: rpc.middleware(mw).command(async ({ id }, ctx) => {
+      if (!mw.isAdmin(ctx)) { ctx.status.forbidden(); return { error: 'Admin only' }; }
+    }),
+  },
+};
 ```
 
 ### `ServerContext` — `ctx` properties
@@ -112,16 +121,26 @@ const mw = makeServerMiddleware(
 
 | Header | When |
 |---|---|
-| `X-Tango-Execution-Time` | Always — server-side execution time in ms |
-| `X-Tango-Validation-Error` | On Zod failure — value `"true"`, status 422 |
+| `x-atom-forge-rpc-exec-time` | Always — server-side execution time in ms |
 | `Content-Type` | `application/msgpack` or `application/json` (based on `Accept` header) |
 | `Cache-Control` | Only on GET when `ctx.cache.set(n)` was called |
 
 ### Zod validation errors
 
-- Status: `422`
-- Body: `ZodIssue[]` (msgpack or JSON depending on `Accept`)
-- Header: `X-Tango-Validation-Error: true`
+Zod failures are returned as application-level errors (status `200 OK`):
+
+- Body: `{ "atomforge.rpc.error": "INVALID_ARGUMENT", issues: ZodIssue[] }`
+
+### Error helpers
+
+Return these from handlers to signal application-level errors. All produce a `200 OK` response with the `atomforge.rpc.error` key set.
+
+```typescript
+return rpc.error.invalidArgument({ message: 'Title too short' })   // code: "INVALID_ARGUMENT"
+return rpc.error.permissionDenied({ message: 'Admins only' })      // code: "PERMISSION_DENIED"
+return rpc.error.internalError()                                   // code: "INTERNAL_ERROR", auto correlationId
+return rpc.error.make('POST_ALREADY_EXISTS', 'Already exists', { slug: post.slug })  // custom
+```
 
 ---
 
@@ -141,17 +160,38 @@ const [api, cfg] = createClient<typeof definition>(
 
 ### Calling endpoints
 
-```typescript
-// Returns just the result
-const result = await api.posts.list.$query(args, options?)
-const result = await api.posts.create.$command(args, options?)
-const result = await api.posts.getById.$get(args, options?)
+Every call returns a `RpcResponse`. Use `isOK()` / `isError()` to branch:
 
-// Returns the full ClientContext
-const ctx = await api.posts.list.$query_ctx(args, options?)
-const ctx = await api.posts.create.$command_ctx(args, options?)
-const ctx = await api.posts.getById.$get_ctx(args, options?)
+```typescript
+const res = await api.posts.list.$query(args, options?)
+const res = await api.posts.create.$command(args, options?)
+const res = await api.posts.getById.$get(args, options?)
+
+if (res.isOK()) {
+  const data = res.result  // typed success data
+} else if (res.isError('INVALID_ARGUMENT')) {
+  console.log(res.result)  // error details
+} else if (res.isError('HTTP:401')) {
+  // transport-level error
+} else {
+  console.log(res.status, res.result)
+}
 ```
+
+### `RpcResponse<TSuccess, TError>`
+
+| Member | Description |
+|---|---|
+| `res.isOK()` | `true` if the call succeeded |
+| `res.isError(code?)` | `true` if error; optional specific code check |
+| `res.status` / `res.getStatus()` | `'OK'` on success, error code string otherwise |
+| `res.result` / `res.getResult()` | Typed success data or error details |
+| `res.ctx` / `res.getCtx()` | The full `ClientContext` for this call |
+
+**Error code format:**
+- Application-level errors: `'INVALID_ARGUMENT'`, `'PERMISSION_DENIED'`, `'NOT_FOUND'`, etc.
+- Transport errors: `'HTTP:401'`, `'HTTP:404'`, `'HTTP:500'`, etc.
+- Network errors: `'NETWORK_ERROR'`
 
 ### `CallOptions`
 
@@ -168,7 +208,7 @@ type CallOptions = {
 
 ### File uploads
 
-Pass `File` or `File[]` as an argument value in a `$command` call. Tango automatically switches to `multipart/form-data`. For arrays, suffix the key with `[]`:
+Pass `File` or `File[]` as an argument value in a `$command` call. Rpc automatically switches to `multipart/form-data`. For arrays, suffix the key with `[]`:
 
 ```typescript
 await api.media.upload.$command({ 'files[]': fileArray });
@@ -227,12 +267,18 @@ Response body is `msgpack` by default. Send `Accept: application/json` to get JS
 
 ---
 
+## URL format
+
+Client-side calls generate dot-separated, fully kebab-case URLs. For example, `api.posts.getById.$query(...)` maps to `/api/rpc/posts.get-by-id`.
+
 ## SvelteKit wiring example
 
 ```typescript
-// src/routes/api/tango/[...path]/+server.ts
-import { handler } from '$lib/server/tango';
+// src/routes/api/rpc/[path]/+server.ts
+import { handler } from '$lib/server/rpc';
 export const GET = handler;
 export const POST = handler;
 ```
+
+Use `[path]` (not `[...path]`) so the dot-separated route is treated as a single segment.
 
