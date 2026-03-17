@@ -19,14 +19,11 @@ const packr = new Packr({structuredClone: true, useRecords: true});
  *
  * @template T
  * @param {string} [baseUrl='/api'] - The base URL for the API client.
- * @param options
  * @returns {[ApiClientDefinition<T>, MiddlewareConfig<T>]} A tuple containing the API client and the middleware config object.
  */
 export function createClient<T>(
     baseUrl: string = "/api",
-    options?: { debug?: boolean },
 ): [ApiClientDefinition<T>, MiddlewareConfig<T>] {
-    const debug = !!options?.debug;
     const middlewareMap = new Map<string, ClientMiddleware[]>();
 
     function createSetterProxy(path: string[]): any {
@@ -71,17 +68,6 @@ export function createClient<T>(
                                 options,
                             );
 
-                            const isDebug = options.debug || debug;
-
-                            if (isDebug) {
-                                console.groupCollapsed(
-                                    `🔆 %c${baseUrl}/%c${ctx.path.map(camelToKebabCase).join(".")}`,
-                                    "font-weight:200; color:gray",
-                                    "font-weight:800;",
-                                );
-                                console.log("ARG:", ctx.getArgs());
-                            }
-
                             const middlewares: ClientMiddleware[] = [];
                             if (middlewareMap.has(""))
                                 middlewares.push(...middlewareMap.get("")!);
@@ -95,46 +81,7 @@ export function createClient<T>(
                                 let result = await call(baseUrl, ctx);
                                 ctx.result = result;
                                 return result;
-                            }).catch((e) => {
-                                if (isDebug) {
-                                    console.log("PIPELINE ERR:", e);
-                                    console.groupEnd();
-                                }
-                                throw e;
                             });
-
-                            if (isDebug) {
-                                const duration = ctx.elapsedTime.toFixed(2);
-                                console.log("RES:", ctx.result);
-                                if (ctx.response) {
-                                    console.log(
-                                        `%c${duration} %cms / %c${parseFloat(ctx.response.headers.get("x-atom-forge-rpc-exec-time") || "0").toFixed(2)} %cms`,
-                                        "font-weight:800;",
-                                        "font-weight:200;",
-                                        "font-weight:800;",
-                                        "font-weight:200;",
-                                    );
-                                    console.groupEnd();
-                                    let color: string;
-                                    if (ctx.response.status < 200) color = "#3498db";
-                                    else if (ctx.response.status < 300) color = "#2ecc71";
-                                    else if (ctx.response.status < 400) color = "#f1c40f";
-                                    else if (ctx.response.status < 500) color = "#e74c3c";
-                                    else color = "#9b59b6";
-                                    console.log(
-                                        `️ ↘ %c${ctx.response.status} %c${ctx.response.statusText}`,
-                                        `font-weight:800; color: ${color}`,
-                                        `font-weight:200; color: ${color}`,
-                                    );
-                                } else {
-                                    console.log(
-                                        `%c${duration} %cms %c(no response object)`,
-                                        "font-weight:800;",
-                                        "font-weight:200; color:gray",
-                                    );
-                                    console.groupEnd();
-                                }
-                            }
 
                             const rpcResponse = ctx.result as RpcResponse<any>;
                             rpcResponse._attachCtx(ctx);

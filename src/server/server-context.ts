@@ -1,28 +1,12 @@
-import type {RequestEvent} from "@sveltejs/kit";
+import {CookieManager} from "../util/cookies.js";
 
 /**
  * The ServerContext class represents the context of a server request, holding
  * details such as headers, arguments, environment variables, caching, and status management.
  * It is designed to provide a streamlined interface for interacting with server-side request data.
- *
- * Properties:
- * - args: A Map object representing arguments passed to the server.
- * - headers: An object containing request and response headers.
- * - elapsedTime: Indicates the time elapsed since the creation of the ServerContext instance.
- * - env: A Map of custom environment variables relevant to the server context.
- * - cache: An object with methods to set and get cache duration.
- * - status: An object providing methods to set or retrieve response status codes, as well as predefined shortcuts for common HTTP status codes.
- *
- * Constructor:
- * - Accepts optional arguments for request-specific data and a required RequestEvent object.
- *
- * Methods:
- * - getArgs: Retrieves all arguments as a plain JavaScript object.
- *
- * Usage and behavior should align with the provided public properties and methods.
  * @internal
  */
-export class ServerContext {
+export class ServerContext<TAdapter = unknown> {
 	private _cache: number = 0;
 	private _status: number = 200;
 	private readonly start: number;
@@ -31,36 +15,32 @@ export class ServerContext {
 	public readonly args: Map<string, any>;
 	/** An object containing request and response headers */
 	public readonly headers: { request: Headers; response: Headers };
+	/** Framework-agnostic cookie manager */
+	public readonly cookies: CookieManager;
 	/** Indicates the time elapsed since the creation of the ServerContext instance */
 	get elapsedTime() {
 		return performance.now() - this.start;
 	}
 
-	/**
-	 * Creates a new ServerContext instance.
-	 * @param args
-	 * @param event
-	 */
 	constructor(
 		args: Record<string, any> | undefined,
-		public readonly event: RequestEvent,
+		public readonly request: Request,
+		public readonly adapterContext: TAdapter,
 	) {
 		this.start = performance.now();
 		this.args = new Map(Object.entries(args || {}));
 		this.headers = {
-			request: this.event.request.headers,
+			request: request.headers,
 			response: new Headers(),
 		};
+		this.cookies = new CookieManager(request.headers, this.headers.response);
 	}
 
 	/** Retrieves all arguments as a plain JavaScript object */
 	public getArgs(): Record<string, any> {
 		return Object.fromEntries(this.args);
 	}
-	/** Retrieves all cookies associated with the current event. */
-	public get cookies() {
-		return this.event.cookies;
-	}
+
 	/** A Map of custom environment variables relevant to the server context. */
 	public readonly env: Map<string | symbol, any> = new Map();
 	/** An object with methods to set and get cache duration. */

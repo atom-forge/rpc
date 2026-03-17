@@ -1,4 +1,3 @@
-import type {RequestEvent} from "@sveltejs/kit";
 import {Packr} from "msgpackr";
 import {z} from "zod";
 import {RPC_ERROR_KEY} from "../util/constants.js";
@@ -12,10 +11,10 @@ const packr = new Packr({structuredClone: true, useRecords: true});
 const acceptedRequests = ["GET.query", "GET.get", "POST.command"];
 const acceptedMethods = ["GET", "POST"];
 
-function flattenApiDefinition(
+export function flattenApiDefinition(
 	apiDefinition: ApiDefinition<any>,
-): Map<string, {rpcType: string; handler: (ctx: ServerContext) => Promise<any>}> {
-	const map = new Map<string, {rpcType: string; handler: (ctx: ServerContext) => Promise<any>}>();
+): Map<string, {rpcType: string; handler: (ctx: ServerContext<any>) => Promise<any>}> {
+	const map = new Map<string, {rpcType: string; handler: (ctx: ServerContext<any>) => Promise<any>}>();
 
 	function traverse(obj: any, prefix: string, inheritedMiddlewares: ServerMiddleware[]) {
 		const middlewares = [...inheritedMiddlewares, ...getMiddlewares<ServerMiddleware>(obj)];
@@ -26,11 +25,11 @@ function flattenApiDefinition(
 			if ("rpcType" in value) {
 				const {rpcType, implementation, zodSchema} = value as RpcMethodImplementationDescriptor<any, any, any>;
 				const methodMiddlewares = [...middlewares, ...getMiddlewares<ServerMiddleware>(value)];
-				const handler = (ctx: ServerContext) =>
+				const handler = (ctx: ServerContext<any>) =>
 					pipeline(ctx, ...methodMiddlewares, (ctx) => {
 						let args = ctx.getArgs();
 						if (zodSchema) args = zodSchema.parse(args);
-						return (implementation as (args: any, ctx: ServerContext) => Promise<any>)(args, ctx);
+						return (implementation as (args: any, ctx: ServerContext<any>) => Promise<any>)(args, ctx);
 					});
 				map.set(fullKey, {rpcType, handler});
 			} else {
@@ -44,40 +43,34 @@ function flattenApiDefinition(
 }
 
 /**
- * Creates a handler function for processing API requests based on the given API definition.
+ * Creates a framework-agnostic handler function for processing RPC requests.
  *
- * @param {ApiDefinition<any>} apiDefinition - The API definition which describes the methods, their types,
- *                                             and middlewares for handling the request.
+ * @param endpointMap - The flattened API endpoint map produced by `flattenApiDefinition`.
  * @param options
- * @return {function(RequestEvent): Promise<Response>} An async function that handles incoming requests
- *                                                     and returns appropriate HTTP responses.
+ * @return An async function that accepts a standard `Request`, route info, and an optional adapter context.
  */
-export function createHandler<
-	SERVER_CONTEXT extends ServerContext = ServerContext,
-	DEF extends ApiDefinition<any> = ApiDefinition<any>,
->(
-	apiDefinition: DEF,
+export function createCoreHandler<TAdapter = unknown>(
+	endpointMap: ReturnType<typeof flattenApiDefinition>,
 	options?: {
-		createServerContext?: (args: any, event: RequestEvent) => SERVER_CONTEXT;
+		createServerContext?: (args: any, request: Request, adapterContext: TAdapter) => ServerContext<TAdapter>;
 	},
-): [(arg0: RequestEvent) => Promise<Response>, DEF] {
+): (request: Request, routeInfo: { path: string }, adapterContext?: TAdapter) => Promise<Response> {
 	const createServerContext =
 		options?.createServerContext ||
-		((args: any, event: RequestEvent) =>
-			new ServerContext(args, event) as SERVER_CONTEXT);
-	const endpointMap = flattenApiDefinition(apiDefinition);
-	const handler = async function handler(
-		event: RequestEvent,
-	): Promise<Response> {
-		const params = event.params;
-		const request = event.request;
+		((args: any, request: Request, adapterContext: TAdapter) =>
+			new ServerContext<TAdapter>(args, request, adapterContext));
 
+	return async function coreHandler(
+		request: Request,
+		routeInfo: { path: string },
+		adapterContext?: TAdapter,
+	): Promise<Response> {
 		if (!acceptedMethods.includes(request.method))
 			return new Response("Method not allowed", {status: 405});
-		if (!params.path)
+		if (!routeInfo.path)
 			return new Response("RPC method not found", {status: 404});
 
-		const entry = endpointMap.get(params.path);
+		const entry = endpointMap.get(routeInfo.path);
 		if (!entry)
 			return new Response("RPC method not found", {status: 404});
 
@@ -118,17 +111,15 @@ export function createHandler<
 			return new Response("Internal server error", {status: 500});
 		}
 
-		let result: any;
-
-		const ctx = createServerContext(args, event);
+		const ctx = createServerContext(args, request, adapterContext as TAdapter);
 
 		try {
-			result = await rpcHandler(ctx);
-			return makeResponse(result, ctx);
+			const result = await rpcHandler(ctx);
+			return makeResponse(result, ctx, request);
 		} catch (e) {
 			if (e instanceof z.ZodError) {
 				ctx.cache.set(0);
-				return makeResponse({[RPC_ERROR_KEY]: "INVALID_ARGUMENT", issues: e.issues}, ctx);
+				return makeResponse({[RPC_ERROR_KEY]: "INVALID_ARGUMENT", issues: e.issues}, ctx, request);
 			}
 			console.error("[rpc] Unhandled error in RPC handler:", e);
 			const correlationId = crypto.randomUUID();
@@ -138,26 +129,16 @@ export function createHandler<
 			);
 		}
 	};
-	return [handler, apiDefinition];
 }
 
-/**
- * Creates an HTTP response with the appropriate body format and headers based on the given context.
- *
- * @param {any} result - The data to include as the response body.
- * @param {ServerContext} ctx - The server context containing request and response details, headers, and other relevant metadata.
- * @return {Response} The constructed HTTP response.
- */
-function makeResponse(result: any, ctx: ServerContext): Response {
-	const prefersJson = ctx.event.request.headers
-		.get("Accept")
-		?.includes("application/json");
+function makeResponse(result: any, ctx: ServerContext<any>, request: Request): Response {
+	const prefersJson = request.headers.get("Accept")?.includes("application/json");
 	ctx.headers.response.set("x-atom-forge-rpc-exec-time", `${ctx.elapsedTime}`);
 	ctx.headers.response.set(
 		"Content-Type",
 		prefersJson ? "application/json" : "application/msgpack",
 	);
-	if (ctx.event.request.method === "GET" && ctx.cache.get()) {
+	if (request.method === "GET" && ctx.cache.get()) {
 		ctx.headers.response.set(
 			"Cache-Control",
 			`public, max-age=${ctx.cache.get()}`,
@@ -176,50 +157,25 @@ function makeResponse(result: any, ctx: ServerContext): Response {
 	});
 }
 
-/**
- * Parses the query parameters from a given URL object and returns them as a key-value pair object.
- *
- * @param {URL} url - The URL object from which query parameters will be extracted.
- * @return {Record<string, any>} An object containing the query parameters as key-value pairs.
- */
 function parseGet(url: URL): Record<string, any> {
 	let args: Record<string, any> = {};
 	url.searchParams.forEach((value, key) => (args[key] = value));
 	return args;
 }
 
-/**
- * Parses a query string from the given URL and decodes the "args" parameter if present.
- *
- * @param {URL} url - The URL object containing the query string to parse.
- * @return {Record<string, any>} A record containing the parsed and unpacked arguments from the "args" parameter.
- * @throws {ParseError} If the "args" parameter cannot be unpacked due to an invalid msgpackr body.
- */
 function parseQuery(url: URL): Record<string, any> {
 	let args: Record<string, any> = {};
 	try {
 		const argsParam = url.searchParams.get("args");
 		if (argsParam)
-			args = packr.unpack(Buffer.from(argsParam, "base64url")) as Record<
-				string,
-				any
-			>;
+			args = packr.unpack(Buffer.from(argsParam, "base64url")) as Record<string, any>;
 	} catch (e) {
 		throw new ParseError("Invalid msgpackr body");
 	}
 	return args;
 }
 
-/**
- * Parses the request body as MessagePack using the msgpackr library.
- *
- * @param {Request} request - The HTTP request object containing the MessagePack payload.
- * @return {Promise<Record<string, any>>} A promise that resolves to an object parsed from the MessagePack data.
- * @throws {ParseError} If the request body cannot be parsed as valid MessagePack.
- */
-async function parseCommandMsgpackr(
-	request: Request,
-): Promise<Record<string, any>> {
+async function parseCommandMsgpackr(request: Request): Promise<Record<string, any>> {
 	let args: Record<string, any> = {};
 	try {
 		const buffer = new Uint8Array(await request.arrayBuffer());
@@ -230,16 +186,7 @@ async function parseCommandMsgpackr(
 	return args;
 }
 
-/**
- * Parses the JSON body of a request and converts it into a JavaScript object.
- *
- * @param {Request} request The incoming HTTP request contains the JSON body to parse.
- * @return {Promise<Record<string, any>>} A promise that resolves to an object representing the parsed JSON.
- * @throws {ParseError} If the JSON body is invalid or cannot be parsed.
- */
-async function parseCommandJson(
-	request: Request,
-): Promise<Record<string, any>> {
+async function parseCommandJson(request: Request): Promise<Record<string, any>> {
 	let args: Record<string, any> = {};
 	try {
 		const text = await request.text();
@@ -250,19 +197,7 @@ async function parseCommandJson(
 	return args;
 }
 
-/**
- * Parses multipart form data from an HTTP request and extracts the command arguments.
- * Supports different data formats such as JSON and MessagePack for the "args" field.
- * Also processes other form fields, handling arrays and single values.
- *
- * @param {Request} request - The HTTP request containing the multipart form data.
- * @return {Promise<Record<string, any>>} A promise that resolves to an object containing
- *                                        the extracted and parsed arguments.
- * @throws {ParseError} If the "args" field is in an unsupported format or contains invalid data.
- */
-async function parseCommandMultipartFormData(
-	request: Request,
-): Promise<Record<string, any>> {
+async function parseCommandMultipartFormData(request: Request): Promise<Record<string, any>> {
 	let args: Record<string, any> = {};
 	const formData = await request.formData();
 	const argsBlob = formData.get("args");
@@ -301,14 +236,4 @@ async function parseCommandMultipartFormData(
 	return args;
 }
 
-
-/**
- * Represents an error that occurs during parsing operations.
- *
- * This class extends the built-in Error object to provide additional
- * context or differentiation for errors specifically related to parsing.
- *
- * Can be used to signal that a parsing operation has failed due to
- * invalid input, unexpected structure, or other parsing-related issues.
- */
 class ParseError extends Error {}

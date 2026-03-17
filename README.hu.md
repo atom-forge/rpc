@@ -1,6 +1,6 @@
 # Rpc
 
-Az Rpc egy teljes stackes RPC (Remote Procedure Call) keretrendszer TypeScript projektekhez. Leegyűsíti a kliens és a szerver közötti kommunikációt egy típusbiztos API biztosításával.
+Az Rpc egy teljes stackes RPC (Remote Procedure Call) keretrendszer TypeScript projektekhez. Leegyűsíti a kliens és a szerver közötti kommunikációt egy típusbiztos API biztosításával. **Framework-agnosztikus** — bármely Node.js vagy edge futtatókörnyezettel használható (SvelteKit, Express, Hono, stb.).
 
 ## Telepítés
 
@@ -18,10 +18,10 @@ Az Rpc fő funkciója a szerver és a kliens közötti végpontok közötti típ
 **1. Definiáld az API-t és hozd létre a handlert a szerveren:**
 
 ```typescript
-// src/hooks.server.ts (vagy a szerver belépési pontja)
-import { createHandler, rpc } from '@atom-forge/rpc';
+// api.ts (megosztott API definíció)
+import { rpc } from '@atom-forge/rpc';
 
-const api = {
+export const api = {
   posts: {
     list: rpc.query(async ({ page }: { page: number }, ctx) => {
       // ... bejegyzések lekérése
@@ -33,10 +33,17 @@ const api = {
     }),
   },
 };
+```
 
-// A handler és a definíció itt jön létre.
-// A definíciót fogjuk majd a kliensen használni.
-export const [handler, definition] = createHandler(api);
+```typescript
+// SvelteKit: src/routes/rpc/[...path]/+server.ts
+import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { api } from '$lib/api';
+
+const handle = createCoreHandler(flattenApiDefinition(api));
+
+export const GET = (event) => handle(event.request, { path: event.params.path }, event);
+export const POST = GET;
 ```
 
 **2. Használd a típust a kliensen:**
@@ -44,20 +51,133 @@ export const [handler, definition] = createHandler(api);
 ```typescript
 // src/lib/client/rpc.ts
 import { createClient } from '@atom-forge/rpc';
-import { definition } from '../../hooks.server'; // Importáld a definíció objektumot
+import type { api } from '$lib/api';
 
-const [api, cfg] = createClient<typeof definition>('/api/rpc');
+const [client, cfg] = createClient<typeof api>('/rpc');
 
 // Minden hívás RpcResponse-t ad vissza
-const res = await api.posts.list.$query({ page: 1 });
+const res = await client.posts.list.$query({ page: 1 });
 if (res.isOK()) {
   console.log(res.result); // típusa: { posts: { id: number, title: string }[] }
 }
 
-await api.posts.create.$command({ title: 'Új bejegyzésem' });
+await client.posts.create.$command({ title: 'Új bejegyzésem' });
 
-export default api;
+export default client;
 ```
+
+## Framework adapterek
+
+Az Rpc core `createCoreHandler` függvénye szabványos `Request` → `Response` alapon működik. Minden frameworkhöz ~2-5 sor adapter kód szükséges.
+
+### SvelteKit
+
+```typescript
+// src/routes/rpc/[...path]/+server.ts
+import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { api } from '$lib/api';
+
+const handle = createCoreHandler(flattenApiDefinition(api));
+
+export const GET = (event) => handle(event.request, { path: event.params.path }, event);
+export const POST = GET;
+```
+
+SvelteKit esetén a `ctx.adapterContext` a `RequestEvent` objektum, így a `locals`, `platform` stb. elérhetők:
+
+```typescript
+// ctx.adapterContext típusa: RequestEvent
+const user = (ctx.adapterContext as RequestEvent).locals.user;
+```
+
+**Alternatíva: `hooks.server.ts`**
+
+Route fájl helyett a szerver hookból is elfoghatod az RPC kéréseket — hasznos, ha már van `hooks.server.ts`, vagy ha egy helyen szeretnéd tartani az összes szerver logikát:
+
+```typescript
+// src/hooks.server.ts
+import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { api } from '$lib/api';
+
+const handleRpc = createCoreHandler(flattenApiDefinition(api));
+
+export const handle = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/rpc/')) {
+    const path = event.url.pathname.slice('/rpc/'.length);
+    return handleRpc(event.request, { path }, event);
+  }
+  return resolve(event);
+};
+```
+
+Nem kell route fájl. A hook a SvelteKit routerje előtt fut, így nincs szükség `src/routes/rpc/` könyvtárra sem.
+
+### Express
+
+```typescript
+import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { api } from './api';
+
+const handle = createCoreHandler(flattenApiDefinition(api));
+
+app.all('/rpc/:path', async (req, res) => {
+  const request = new Request(
+    `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+    { method: req.method, headers: req.headers as any, body: req.method !== 'GET' ? req : null }
+  );
+  const response = await handle(request, { path: req.params.path }, { req, res });
+  res.status(response.status);
+  response.headers.forEach((v, k) => res.setHeader(k, v));
+  res.send(Buffer.from(await response.arrayBuffer()));
+});
+```
+
+### Hono
+
+```typescript
+import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { api } from './api';
+
+const handle = createCoreHandler(flattenApiDefinition(api));
+
+app.all('/rpc/:path', (c) => handle(c.req.raw, { path: c.req.param('path') }, c));
+```
+
+### Next.js (App Router)
+
+```typescript
+// app/rpc/[...path]/route.ts
+import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { api } from '@/lib/api';
+
+const handle = createCoreHandler(flattenApiDefinition(api));
+
+export async function GET(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return handle(request, { path: path.join('.') }, { request, params });
+}
+export const POST = GET;
+```
+
+> `path.join('.')` az URL szegmenseket (`['users', 'get-all']`) visszaalakítja a dot-szeparált útvonallá (`'users.get-all'`). Next.js 15-től a `params` Promise — ezért kell az `await`.
+
+### Nuxt 3
+
+```typescript
+// server/routes/rpc/[...path].ts
+import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { getRouterParam, toWebRequest } from 'h3';
+import { api } from '~/lib/api';
+
+const handle = createCoreHandler(flattenApiDefinition(api));
+
+export default defineEventHandler(async (event) => {
+  const path = getRouterParam(event, 'path') ?? '';
+  return handle(toWebRequest(event), { path }, event);
+});
+```
+
+> A h3 `toWebRequest()` konvertálja az h3 eventet szabványos `Request`-té. A `defineEventHandler` natívan képes `Response` objektumot visszaadni.
 
 ## Kommunikációs protokoll
 
@@ -85,21 +205,15 @@ A `createClient` függvény új API klienst hoz létre. A kliens oldali hívás 
 
 ```typescript
 import { createClient } from '@atom-forge/rpc';
-import { definition } from '../../hooks.server';
+import type { api } from './api';
 
-const [api, cfg] = createClient<typeof definition>('/api/rpc');
+const [client, cfg] = createClient<typeof api>('/rpc');
 
 // Ha a szerver oldali endpoint rpc.query-vel van definiálva:
-const result = await api.posts.list.$query({ page: 1 });
+const result = await client.posts.list.$query({ page: 1 });
 
 // Command hívás példa
-await api.posts.create.$command({ title: 'Hello Világ' });
-```
-
-Debug naplózást is engedélyezhetsz az összes híváshoz:
-
-```typescript
-const [api, cfg] = createClient<typeof definition>('/api/rpc', { debug: true });
+await client.posts.create.$command({ title: 'Hello Világ' });
 ```
 
 ### Hívási opciók
@@ -107,7 +221,7 @@ const [api, cfg] = createClient<typeof definition>('/api/rpc', { debug: true });
 Minden RPC metódus (`$command`, `$query`, `$get`) egy opcionális második argumentumot fogad el hívás szintű beállításokhoz:
 
 ```typescript
-const result = await api.posts.list.$query({ page: 1 }, {
+const result = await client.posts.list.$query({ page: 1 }, {
   // Kérés megszakítása AbortController segítségével
   abortSignal: controller.signal,
 
@@ -118,9 +232,6 @@ const result = await api.posts.list.$query({ page: 1 }, {
 
   // Egyedi kérés fejlécek hozzáadása csak ehhez a híváshoz
   headers: new Headers({ 'X-Custom-Header': 'érték' }),
-
-  // Hívás szintű debug naplózás engedélyezése
-  debug: true,
 });
 ```
 
@@ -142,7 +253,7 @@ Minden RPC hívás `RpcResponse`-t ad vissza, az alábbi tagokkal:
 - Hálózati hibák: `'NETWORK_ERROR'`
 
 ```typescript
-const res = await api.posts.create.$command({ title: 'Helló' });
+const res = await client.posts.create.$command({ title: 'Helló' });
 
 if (res.isOK()) {
   console.log(res.result);             // típusos eredmény
@@ -176,7 +287,7 @@ const api = {
 // Kliens oldalon
 const coverFile = document.querySelector('input[type=file]').files[0];
 
-await api.posts.create.$command(
+await client.posts.create.$command(
   { title: 'Helló', cover: coverFile },
   {
     onProgress: ({ percent, phase }) => console.log(`${phase}: ${percent}%`),
@@ -195,7 +306,18 @@ const api = {
 };
 
 // Kliens oldalon
-await api.media.upload.$command({ 'files[]': selectedFiles });
+await client.media.upload.$command({ 'files[]': selectedFiles });
+```
+
+### `clientLogger`
+
+A `clientLogger` egy beépített kliens middleware, amely RPC hívások részleteit naplózza a böngésző konzoljára — a kérés útvonalát, argumentumait, a választ, az időzítést és a HTTP státuszkódot.
+
+```typescript
+import { createClient, clientLogger } from '@atom-forge/rpc';
+
+const [client, cfg] = createClient<typeof api>('/rpc');
+cfg.$ = clientLogger('/rpc'); // globális alkalmazás
 ```
 
 ### `makeClientMiddleware`
@@ -220,12 +342,12 @@ cfg.$ = loggerMiddleware;
 
 ## Szerver oldali használat
 
-### `createHandler`
+### `createCoreHandler` és `flattenApiDefinition`
 
-A `createHandler` függvény request handlert hoz létre a szerverhez, és visszaadja a handlert és a típusos API definíciót.
+A `createCoreHandler` framework-agnosztikus handler függvényt hoz létre, amelyik szabványos `Request` → `Response` alapon működik. A `flattenApiDefinition` előkészíti az API definíciót a handler számára.
 
 ```typescript
-import { createHandler, rpc } from '@atom-forge/rpc';
+import { createCoreHandler, flattenApiDefinition, rpc } from '@atom-forge/rpc';
 
 const api = {
   posts: {
@@ -245,7 +367,8 @@ const api = {
   },
 };
 
-export const [handler, definition] = createHandler(api);
+const endpointMap = flattenApiDefinition(api);
+const handle = createCoreHandler(endpointMap);
 ```
 
 #### Egyedi szerver kontextus
@@ -253,16 +376,18 @@ export const [handler, definition] = createHandler(api);
 Megadhatsz egyedi szerver kontextus factory-t, hogy saját tulajdonságokat (pl. hitelesített felhasználó) injektálj minden handlerbe:
 
 ```typescript
-import { createHandler, ServerContext } from '@atom-forge/rpc';
+import { createCoreHandler, flattenApiDefinition, ServerContext } from '@atom-forge/rpc';
+import type { RequestEvent } from '@sveltejs/kit';
 
-class AppContext extends ServerContext {
+class AppContext extends ServerContext<RequestEvent> {
   get user() {
-    return this.event.locals.user;
+    return this.adapterContext.locals.user;
   }
 }
 
-export const [handler, definition] = createHandler(api, {
-  createServerContext: (args, event) => new AppContext(args, event),
+const handle = createCoreHandler(flattenApiDefinition(api), {
+  createServerContext: (args, request, adapterContext) =>
+    new AppContext(args, request, adapterContext),
 });
 ```
 
@@ -300,10 +425,11 @@ Minden handler és szerver oldali middleware kap egy `ctx` objektumot az alábbi
 
 | Tag | Leírás |
 |---|---|
-| `ctx.event` | A nyers SvelteKit `RequestEvent`. |
+| `ctx.request` | A szabványos Web API `Request` objektum. |
+| `ctx.adapterContext` | A framework-specifikus kontextus (SvelteKit: `RequestEvent`, Hono: `Context`, stb.). |
 | `ctx.getArgs()` | Visszaadja az összes argumentumot egyszerű objektumként. |
 | `ctx.args` | Az argumentumok `Map<string, any>` formában. |
-| `ctx.cookies` | A `ctx.event.cookies` rövidítése. |
+| `ctx.cookies` | Cookie kezelő: `get(name)`, `set(name, value, opts?)`, `delete(name, opts?)`, `getAll()`. |
 | `ctx.headers.request` | A bejövő kérés fejlécei. |
 | `ctx.headers.response` | A módosítható válasz fejlécek. |
 | `ctx.cache.set(seconds)` | Beállítja a `Cache-Control` max-age értékét GET válaszoknál. |
@@ -340,7 +466,8 @@ import { rpc } from '@atom-forge/rpc';
 const api = {
   posts: {
     create: rpc.command(async ({ title }, ctx) => {
-      if (!ctx.event.locals.user) return rpc.error.permissionDenied();
+      // SvelteKit esetén: (ctx.adapterContext as RequestEvent).locals.user
+      if (!ctx.adapterContext?.locals?.user) return rpc.error.permissionDenied();
       if (title.length < 3) return rpc.error.invalidArgument({ message: 'A cím túl rövid' });
       // ...
       return { id: 1, title };
@@ -396,7 +523,7 @@ A validációs hibákat a kliensen a `RpcResponse`-on keresztül kezelheted:
 
 ```typescript
 // Kliens oldalon
-const res = await api.posts.create.$command({ title: 'Hi' });
+const res = await client.posts.create.$command({ title: 'Hi' });
 if (res.isError('INVALID_ARGUMENT')) {
   console.log(res.result.issues); // ZodIssue[]
 }
@@ -410,10 +537,12 @@ A `makeServerMiddleware` függvény szerver oldali middleware létrehozására s
 
 ```typescript
 import { makeServerMiddleware } from '@atom-forge/rpc';
+import type { RequestEvent } from '@sveltejs/kit';
 
 const authMiddleware = makeServerMiddleware(
   async (ctx, next) => {
-    if (!ctx.event.locals.user) {
+    const user = (ctx.adapterContext as RequestEvent).locals.user;
+    if (!user) {
       ctx.status.unauthorized();
       return { error: 'Nem engedélyezett' }; // ✅ korai visszatérés, next() hívás nem szükséges
     }
@@ -421,7 +550,7 @@ const authMiddleware = makeServerMiddleware(
   },
   // Opcionális accessor-ok, amelyek a middleware függvényhez vannak csatolva
   {
-    isAdmin: (ctx) => ctx.event.locals.user?.role === 'admin',
+    isAdmin: (ctx) => (ctx.adapterContext as RequestEvent).locals.user?.role === 'admin',
   }
 );
 ```
@@ -482,4 +611,3 @@ rpc.middleware(authMiddleware).on(postsApi);
 
 const api = { posts: postsApi };
 ```
-

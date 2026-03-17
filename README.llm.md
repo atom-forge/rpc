@@ -1,6 +1,6 @@
 # Rpc — LLM Reference
 
-Rpc is a full-stack TypeScript RPC framework for SvelteKit. It provides end-to-end type safety between server and client using MessagePack as the primary transport protocol.
+Rpc is a full-stack TypeScript RPC framework. **Framework-agnostic** — works with SvelteKit, Next.js, Nuxt, Express, Hono, and any runtime that supports the Web API `Request`/`Response`. It provides end-to-end type safety between server and client using MessagePack as the primary transport protocol.
 
 ## Package
 
@@ -14,8 +14,8 @@ bun add @atom-forge/rpc
 ## Exports
 
 ```typescript
-import { createClient, makeClientMiddleware, RpcResponse } from '@atom-forge/rpc'; // client
-import { createHandler, rpc, rpcFactory, makeServerMiddleware, invalidArgument, permissionDenied, internalError } from '@atom-forge/rpc'; // server
+import { createClient, makeClientMiddleware, clientLogger, RpcResponse } from '@atom-forge/rpc'; // client
+import { createCoreHandler, flattenApiDefinition, rpc, rpcFactory, makeServerMiddleware } from '@atom-forge/rpc'; // server
 import { z } from 'zod'; // install zod as a peer dependency in your project
 ```
 
@@ -36,9 +36,6 @@ rpc.command(async (args, ctx) => result)  // POST /path (body: msgpack or JSON)
 Add Zod validation (import `z` from `zod` directly):
 
 ```typescript
-import { rpc } from '@atom-forge/rpc';
-import { z } from 'zod';
-
 rpc.zod({ id: z.number(), name: z.string() }).query(...)
 rpc.zod({ ... }).command(...)
 rpc.zod({ ... }).get(...)
@@ -50,21 +47,84 @@ Add server middleware:
 rpc.middleware(mw).query(...)
 rpc.middleware(mw).command(...)
 rpc.middleware(mw).zod({ ... }).command(...)
-rpc.middleware(mw).on(existingObject)  // attach to any object
+rpc.middleware(mw).on(existingObject)  // attach to any object/group
 ```
 
-### `createHandler`
+### `flattenApiDefinition` + `createCoreHandler`
 
 ```typescript
-const [handler, definition] = createHandler(apiObject, {
-  createServerContext?: (args, event: RequestEvent) => ServerContext
+const endpointMap = flattenApiDefinition(apiObject);
+
+const handle = createCoreHandler(endpointMap, {
+  createServerContext?: (args, request: Request, adapterContext: TAdapter) => ServerContext<TAdapter>
+});
+
+// handle signature:
+// (request: Request, routeInfo: { path: string }, adapterContext?: TAdapter) => Promise<Response>
+```
+
+- Accepted HTTP methods: `GET` for `query`/`get`, `POST` for `command`.
+- Accepted `Content-Type` for POST: `application/msgpack` (default), `application/json`, `multipart/form-data`. Unknown → `415`.
+- `adapterContext` is passed through as `ctx.adapterContext` in every handler.
+
+### Framework adapter wiring
+
+**SvelteKit** — route file `src/routes/rpc/[...path]/+server.ts`:
+```typescript
+const handle = createCoreHandler(flattenApiDefinition(api));
+export const GET = (event) => handle(event.request, { path: event.params.path }, event);
+export const POST = GET;
+// ctx.adapterContext === RequestEvent
+```
+
+**SvelteKit** — alternative via `src/hooks.server.ts` (no route file needed):
+```typescript
+const handleRpc = createCoreHandler(flattenApiDefinition(api));
+export const handle = async ({ event, resolve }) => {
+  if (event.url.pathname.startsWith('/rpc/')) {
+    return handleRpc(event.request, { path: event.url.pathname.slice('/rpc/'.length) }, event);
+  }
+  return resolve(event);
+};
+```
+
+**Next.js App Router** — `app/rpc/[...path]/route.ts`:
+```typescript
+const handle = createCoreHandler(flattenApiDefinition(api));
+export async function GET(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;           // params is a Promise in Next.js 15+
+  return handle(request, { path: path.join('.') }, { request, params });
+}
+export const POST = GET;
+```
+
+**Nuxt 3** — `server/routes/rpc/[...path].ts`:
+```typescript
+import { getRouterParam, toWebRequest } from 'h3';
+const handle = createCoreHandler(flattenApiDefinition(api));
+export default defineEventHandler(async (event) => {
+  return handle(toWebRequest(event), { path: getRouterParam(event, 'path') ?? '' }, event);
 });
 ```
 
-- `handler`: `(event: RequestEvent) => Promise<Response>` — wire this to your SvelteKit route.
-- `definition`: the same `apiObject`, typed. Export this and import its `typeof` on the client.
-- Accepted HTTP methods: `GET` for `query`/`get`, `POST` for `command`.
-- Accepted `Content-Type` for POST: `application/msgpack` (default), `application/json`, `multipart/form-data`. Unknown `Content-Type` → `415 Unsupported Media Type`.
+**Express**:
+```typescript
+const handle = createCoreHandler(flattenApiDefinition(api));
+app.all('/rpc/:path', async (req, res) => {
+  const request = new Request(`${req.protocol}://${req.get('host')}${req.originalUrl}`,
+    { method: req.method, headers: req.headers as any, body: req.method !== 'GET' ? req : null });
+  const response = await handle(request, { path: req.params.path }, { req, res });
+  res.status(response.status);
+  response.headers.forEach((v, k) => res.setHeader(k, v));
+  res.send(Buffer.from(await response.arrayBuffer()));
+});
+```
+
+**Hono**:
+```typescript
+const handle = createCoreHandler(flattenApiDefinition(api));
+app.all('/rpc/:path', (c) => handle(c.req.raw, { path: c.req.param('path') }, c));
+```
 
 ### `rpcFactory`
 
@@ -85,10 +145,10 @@ const mw = makeServerMiddleware(
     // ctx.status.unauthorized(); return { error: '...' };
     return await next(); // ✅ must return
   },
-  { isAdmin: (ctx) => ctx.event.locals.user?.role === 'admin' }  // attached to the function object
+  { isAdmin: (ctx) => (ctx.adapterContext as RequestEvent).locals.user?.role === 'admin' }
 );
 
-// Call accessors from endpoint implementations by passing ctx:
+// Accessor functions are attached to the middleware function object itself:
 const api = {
   admin: {
     deletePost: rpc.middleware(mw).command(async ({ id }, ctx) => {
@@ -98,14 +158,15 @@ const api = {
 };
 ```
 
-### `ServerContext` — `ctx` properties
+### `ServerContext<TAdapter>` — `ctx` properties
 
 | Property | Type | Description |
 |---|---|---|
-| `ctx.event` | `RequestEvent` | Raw SvelteKit event |
+| `ctx.request` | `Request` | Standard Web API Request object |
+| `ctx.adapterContext` | `TAdapter` | Framework-specific context (e.g. `RequestEvent`, Hono `Context`) |
 | `ctx.args` | `Map<string, any>` | Parsed request arguments |
 | `ctx.getArgs()` | `() => Record<string, any>` | Args as plain object |
-| `ctx.cookies` | `Cookies` | Shorthand for `ctx.event.cookies` |
+| `ctx.cookies` | `CookieManager` | `get(name)`, `set(name, value, opts?)`, `delete(name, opts?)`, `getAll()` |
 | `ctx.headers.request` | `Headers` | Incoming request headers |
 | `ctx.headers.response` | `Headers` | Mutable outgoing response headers |
 | `ctx.cache.set(n)` | `(seconds: number) => void` | Set `Cache-Control` max-age (GET only) |
@@ -124,6 +185,7 @@ const api = {
 | `x-atom-forge-rpc-exec-time` | Always — server-side execution time in ms |
 | `Content-Type` | `application/msgpack` or `application/json` (based on `Accept` header) |
 | `Cache-Control` | Only on GET when `ctx.cache.set(n)` was called |
+| `Set-Cookie` | When `ctx.cookies.set()` or `ctx.cookies.delete()` is called |
 
 ### Zod validation errors
 
@@ -149,13 +211,12 @@ return rpc.error.make('POST_ALREADY_EXISTS', 'Already exists', { slug: post.slug
 ### `createClient`
 
 ```typescript
-const [api, cfg] = createClient<typeof definition>(
-  baseUrl: string = '/api',
-  options?: { debug?: boolean }
+const [api, cfg] = createClient<typeof apiDefinition>(
+  baseUrl: string = '/api'
 );
 ```
 
-- `api`: recursive proxy matching the server API shape.
+- `api`: recursive proxy matching the server API shape. Use `typeof api` (the server-side api object) as the generic.
 - `cfg`: middleware configuration proxy.
 
 ### Calling endpoints
@@ -200,7 +261,6 @@ type CallOptions = {
   abortSignal?: AbortSignal;
   onProgress?: (p: { loaded: number; total: number; percent: number; phase: 'upload' | 'download' }) => void;
   headers?: Headers;
-  debug?: boolean;
 }
 ```
 
@@ -233,10 +293,19 @@ await api.media.upload.$command({ 'files[]': fileArray });
 ### Applying client middleware
 
 ```typescript
-cfg.$ = mw                   // global (all routes)
-cfg.posts.$ = mw             // all endpoints under /posts
-cfg.posts.create = mw        // single endpoint /posts/create
+cfg.$ = mw                    // global (all routes)
+cfg.posts.$ = mw              // all endpoints under /posts
+cfg.posts.create = mw         // single endpoint /posts/create
 cfg.posts.create = [mw1, mw2] // multiple middlewares
+```
+
+### `clientLogger`
+
+Built-in debug middleware. Logs path, args, result, timing, and HTTP status to the browser console.
+
+```typescript
+const [api, cfg] = createClient<typeof apiDefinition>('/rpc');
+cfg.$ = clientLogger('/rpc'); // baseUrl must match createClient's baseUrl
 ```
 
 ### `makeClientMiddleware`
@@ -269,16 +338,6 @@ Response body is `msgpack` by default. Send `Accept: application/json` to get JS
 
 ## URL format
 
-Client-side calls generate dot-separated, fully kebab-case URLs. For example, `api.posts.getById.$query(...)` maps to `/api/rpc/posts.get-by-id`.
+Client-side calls generate dot-separated, fully kebab-case paths. For example, `api.posts.getById.$query(...)` maps to `/rpc/posts.get-by-id`.
 
-## SvelteKit wiring example
-
-```typescript
-// src/routes/api/rpc/[path]/+server.ts
-import { handler } from '$lib/server/rpc';
-export const GET = handler;
-export const POST = handler;
-```
-
-Use `[path]` (not `[...path]`) so the dot-separated route is treated as a single segment.
-
+Use `[...path]` (catch-all) in your framework's router so the dot-separated path is treated as a single segment. With Next.js (array params), join with `.`: `params.path.join('.')`.

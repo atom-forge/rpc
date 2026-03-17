@@ -65,7 +65,6 @@ export type CallOptions = {
 	 * and standard headers to define how the request should be processed.
 	 */
 	headers?: Headers;
-	debug?: boolean;
 };
 
 /** A type that can be either a single middleware or an array of them. */
