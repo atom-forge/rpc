@@ -1,14 +1,25 @@
 {
 	"name": "@atom-forge/rpc",
-	"version": "0.3.1",
+	"version": "0.3.2",
+	"description": "Type-safe RPC framework for TypeScript with Zod validation and middleware support",
+	"keywords": ["rpc", "typescript", "zod", "type-safe", "middleware", "api"],
+	"author": "Gergely Laborci",
+	"license": "SEE LICENSE IN LICENSE",
 	"type": "module",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		}
+	},
 	"repository": {
 		"url": "git://github.com/atom-forge/rpc.git"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"LICENSE"
 	],
 	"scripts": {
 		"build": "tsc"
