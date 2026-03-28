@@ -1,6 +1,6 @@
 {
 	"name": "@atom-forge/rpc",
-	"version": "0.3.4",
+	"version": "0.3.5",
 	"description": "Type-safe RPC framework for TypeScript with Zod validation and middleware support",
 	"keywords": [
 		"rpc",
@@ -26,7 +26,8 @@
 	},
 	"files": [
 		"dist",
-		"LICENSE"
+		"LICENSE",
+		"CHANGELOG.md"
 	],
 	"scripts": {
 		"build": "tsc",
