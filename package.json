@@ -1,6 +1,6 @@
 {
 	"name": "@atom-forge/rpc",
-	"version": "0.3.5",
+	"version": "0.3.6",
 	"description": "Type-safe RPC framework for TypeScript with Zod validation and middleware support",
 	"keywords": [
 		"rpc",
@@ -32,7 +32,7 @@
 	"scripts": {
 		"build": "tsc",
 		"prepublishOnly": "bun run scripts/prepublish.ts && bun run build",
-		"publish": "npm publish --access public"
+		"release": "npm publish --access public"
 	},
 	"dependencies": {
 		"msgpackr": "^1.11.8"
