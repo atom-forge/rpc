@@ -203,7 +203,10 @@ async function parseCommandMultipartFormData(request: Request): Promise<Record<s
 	const argsBlob = formData.get("args");
 	if (argsBlob instanceof Blob) {
 		const buffer = new Uint8Array(await argsBlob.arrayBuffer());
-		switch (argsBlob.type) {
+		// Some runtimes (e.g. Node.js) may not preserve the MIME type of blobs in
+		// multipart form data. Fall back to msgpack since that is what the client sends.
+		const argsType = argsBlob.type || "application/msgpack";
+		switch (argsType) {
 			case "application/json":
 				try {
 					args = JSON.parse(new TextDecoder().decode(buffer)) || {};
@@ -219,7 +222,7 @@ async function parseCommandMultipartFormData(request: Request): Promise<Record<s
 				}
 				break;
 			default:
-				throw new ParseError(`Unsupported args type: ${argsBlob.type}`);
+				throw new ParseError(`Unsupported args type: ${argsType}`);
 		}
 	}
 
