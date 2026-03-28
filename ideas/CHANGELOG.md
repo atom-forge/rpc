@@ -4,35 +4,35 @@
 
 ### Breaking Changes
 
-- **URL formátum megváltozott.** A kliensoldali hívások mostantól pont-szeparátoros, teljes egészében `kebab-case` URL-t generálnak.
-  - Régi: `/api/users/getProfile`
-  - Új: `/api/users.get-profile`
-- **SvelteKit routing:** a `src/routes/api/[...path]/+server.ts` fájlt ajánlott `[path]`-ra cserélni, hogy a régi formátumú kérések ne kerüljenek részleges feldolgozásra.
+- **URL format changed.** Client-side calls now generate dot-separated, fully `kebab-case` URLs.
+  - Old: `/api/users/getProfile`
+  - New: `/api/users.get-profile`
+- **SvelteKit routing:** it is recommended to change `src/routes/api/[...path]/+server.ts` to `[path]` to prevent partial processing of old format requests.
 
 ### Added
 
-- **`flattenApiDefinition`** — a szerver indulásakor az API definícióból egy lapos `Map<string, { rpcType, handler }>` épül fel. Minden `handler` egy előre összerakott pipeline closure (middleware-ek + Zod-validáció + implementation), így kérésenként csak egy `Map.get()` és egy függvényhívás szükséges.
-- **`camelToKebabCase`** utility (`src/util/string.ts`) — megosztott segédfüggvény a kliens és szerver között, akronimákat helyesen kezelő regex-szel (`getUserID` → `get-user-id`).
-- **415 Unsupported Media Type** válasz ismeretlen `Content-Type` esetén `command` kéréseknél (korábban szótlanul msgpackr-rel próbálkozott).
+- **`flattenApiDefinition`** — at server startup, a flat `Map<string, { rpcType, handler }>` is built from the API definition. Each `handler` is a pre-assembled pipeline closure (middlewares + Zod validation + implementation), so only a `Map.get()` and a function call are needed per request.
+- **`camelToKebabCase`** utility (`src/util/string.ts`) — shared helper function between client and server, with a regex that correctly handles acronyms (`getUserID` → `get-user-id`).
+- **415 Unsupported Media Type** response for unknown `Content-Type` in `command` requests (previously it silently tried with msgpackr).
 
 ### Changed
 
-- **`tango.ts` refaktor** — a `query`/`command`/`get` hármas és a Zod-kezelés duplikációja megszűnt. Két belső helper (`makeDescriptor`, `makeZodMethodSet`) váltja ki a korábbi ~195 soros, triplikált logikát (~76 sorra csökkentve).
-- **`endpointMap`** — a korábbi félrevezető `flatMap` név helyett.
-- **Kliens debug logging** — `isDebug` konstans (korábban kétszer kiértékelt feltétel); hiba esetén az error a konzolcsoporton belül jelenik meg, a csoport mindig bezárul (korábban pipeline-hiba esetén nyitva maradt).
-- **Kliens `middlewareMap` kulcsok** — az új URL-konvencióval konzisztens formátumra frissítve (`.` szeparátor, kebab-case).
+- **`tango.ts` refactor** — duplication of `query`/`command`/`get` triad and Zod handling removed. Two internal helpers (`makeDescriptor`, `makeZodMethodSet`) replace the previous ~195 line triplicated logic (reduced to ~76 lines).
+- **`endpointMap`** — renamed from the misleading `flatMap` name.
+- **Client debug logging** — `isDebug` constant (previously a twice-evaluated condition); in case of error, the error appears inside the console group, and the group always closes (previously it remained open in case of pipeline error).
+- **Client `middlewareMap` keys** — updated to a format consistent with the new URL convention (dot separator, kebab-case).
 
 ### Fixed
 
-- **Heterogén File tömb feltöltés** — a feltöltési logika mostantól az összes tömbelemre ellenőrzi, hogy `File`-e (`every()`), nem csak az elsőre.
-- **`abortSignal` / `onProgress`** — felesleges ternary operátor eltávolítva a `ClientContext` konstruktorában.
+- **Heterogeneous File array upload** — the upload logic now checks if all array elements are `File` (`every()`), not just the first one.
+- **`abortSignal` / `onProgress`** — unnecessary ternary operator removed in `ClientContext` constructor.
 
 ---
 
 ## [0.1.7] - 2025-xx-xx
 
-Függőség-frissítések, Zod re-export `tz` névvel, kódstílus-egységesítés.
+Dependency updates, Zod re-export with `tz` name, code style unification.
 
 ## [0.1.0] - 2025-xx-xx
 
-Kezdeti implementáció: RPC keretrendszer middleware támogatással.
+Initial implementation: RPC framework with middleware support.

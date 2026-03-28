@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **Node.js / Bun kompatibilitás fájlfeltöltésnél** — egyes runtime-ok (pl. Node.js/undici) multipart form data esetén nem őrzik meg a blob MIME típusát. Ha `argsBlob.type` üres, a szerver mostantól `application/msgpack`-re esik vissza, ahelyett hogy `ParseError`-t dobna.
+- **Node.js / Bun compatibility for file uploads** — some runtimes (e.g. Node.js/undici) do not preserve the MIME type of a blob when using multipart form data. If `argsBlob.type` is empty, the server now falls back to `application/msgpack` instead of throwing a `ParseError`.
 
 ---
 
@@ -12,12 +12,12 @@
 
 ### Added
 
-- **Patron License** — saját licencdokumentum hozzáadva (`LICENSE`).
+- **Patron License** — added own license document (`LICENSE`).
 
 ### Changed
 
-- **`package.json` metaadatok** — kulcsszavak, repository URL, szerző és licencmező frissítve.
-- **README** — licenc- és közreműködési szekció bővítve.
+- **`package.json` metadata** — keywords, repository URL, author and license fields updated.
+- **README** — license and contribution sections expanded.
 
 ---
 
@@ -25,14 +25,14 @@
 
 ### Added
 
-- **Client logger** (`src/client/logger.ts`) — önálló modul a kliens oldali debug naplózáshoz.
-- **Cookie segédlet** (`src/util/cookies.ts`) — cookie kezelő utility a szerver kontextushoz.
-- **`ServerContext` cookie API** — `ctx.cookies` elérhetővé vált a handler-ekben.
+- **Client logger** (`src/client/logger.ts`) — standalone module for client-side debug logging.
+- **Cookie utility** (`src/util/cookies.ts`) — cookie handler utility for server context.
+- **`ServerContext` cookie API** — `ctx.cookies` is now available in handlers.
 
 ### Changed
 
-- **Dokumentáció átstrukturálás** — `README.md` felosztva: `README.en.md`, `README.hu.md`, `README.llm.md` fájlokra.
-- **`createClient` logger integráció** — a debug logging a dedikált logger modulon keresztül történik.
+- **Documentation restructuring** — `README.md` split into `README.en.md`, `README.hu.md`, `README.llm.md` files.
+- **`createClient` logger integration** — debug logging is now handled via the dedicated logger module.
 
 ---
 
@@ -40,28 +40,28 @@
 
 ### Breaking Changes
 
-- **URL formátum megváltozott.** A kliensoldali hívások mostantól pont-szeparátoros, teljes egészében `kebab-case` URL-t generálnak.
-  - Régi: `/api/users/getProfile`
-  - Új: `/api/users.get-profile`
-- **SvelteKit routing:** a `src/routes/api/[...path]/+server.ts` fájlt ajánlott `[path]`-ra cserélni, hogy a régi formátumú kérések ne kerüljenek részleges feldolgozásra.
+- **URL format changed.** Client-side calls now generate dot-separated, fully `kebab-case` URLs.
+  - Old: `/api/users/getProfile`
+  - New: `/api/users.get-profile`
+- **SvelteKit routing:** it is recommended to change `src/routes/api/[...path]/+server.ts` to `[path]` to prevent partial processing of old format requests.
 
 ### Added
 
-- **`flattenApiDefinition`** — a szerver indulásakor az API definícióból egy lapos `Map<string, { rpcType, handler }>` épül fel. Minden `handler` egy előre összerakott pipeline closure (middleware-ek + Zod-validáció + implementation), így kérésenként csak egy `Map.get()` és egy függvényhívás szükséges.
-- **`camelToKebabCase`** utility (`src/util/string.ts`) — megosztott segédfüggvény a kliens és szerver között, akronimákat helyesen kezelő regex-szel (`getUserID` → `get-user-id`).
-- **415 Unsupported Media Type** válasz ismeretlen `Content-Type` esetén `command` kéréseknél (korábban szótlanul msgpackr-rel próbálkozott).
+- **`flattenApiDefinition`** — at server startup, a flat `Map<string, { rpcType, handler }>` is built from the API definition. Each `handler` is a pre-assembled pipeline closure (middlewares + Zod validation + implementation), so only a `Map.get()` and a function call are needed per request.
+- **`camelToKebabCase`** utility (`src/util/string.ts`) — shared helper function between client and server, with a regex that correctly handles acronyms (`getUserID` → `get-user-id`).
+- **415 Unsupported Media Type** response for unknown `Content-Type` in `command` requests (previously it silently tried with msgpackr).
 
 ### Changed
 
-- **`tango.ts` refaktor** — a `query`/`command`/`get` hármas és a Zod-kezelés duplikációja megszűnt. Két belső helper (`makeDescriptor`, `makeZodMethodSet`) váltja ki a korábbi ~195 soros, triplikált logikát (~76 sorra csökkentve).
-- **`endpointMap`** — a korábbi félrevezető `flatMap` név helyett.
-- **Kliens debug logging** — `isDebug` konstans (korábban kétszer kiértékelt feltétel); hiba esetén az error a konzolcsoporton belül jelenik meg, a csoport mindig bezárul (korábban pipeline-hiba esetén nyitva maradt).
-- **Kliens `middlewareMap` kulcsok** — az új URL-konvencióval konzisztens formátumra frissítve (`.` szeparátor, kebab-case).
+- **`tango.ts` refactor** — duplication of `query`/`command`/`get` triad and Zod handling removed. Two internal helpers (`makeDescriptor`, `makeZodMethodSet`) replace the previous ~195 line triplicated logic (reduced to ~76 lines).
+- **`endpointMap`** — renamed from the misleading `flatMap` name.
+- **Client debug logging** — `isDebug` constant (previously a twice-evaluated condition); in case of error, the error appears inside the console group, and the group always closes (previously it remained open in case of pipeline error).
+- **Client `middlewareMap` keys** — updated to a format consistent with the new URL convention (dot separator, kebab-case).
 
 ### Fixed
 
-- **Heterogén File tömb feltöltés** — a feltöltési logika mostantól az összes tömbelemre ellenőrzi, hogy `File`-e (`every()`), nem csak az elsőre.
-- **`abortSignal` / `onProgress`** — felesleges ternary operátor eltávolítva a `ClientContext` konstruktorában.
+- **Heterogeneous File array upload** — the upload logic now checks if all array elements are `File` (`every()`), not just the first one.
+- **`abortSignal` / `onProgress`** — unnecessary ternary operator removed in `ClientContext` constructor.
 
 ---
 
@@ -69,13 +69,13 @@
 
 ### Changed
 
-- Függőség-frissítések.
-- Zod re-export `tz` névvel (`import { tz } from "@atom-forge/rpc"`).
-- Kódstílus-egységesítés (tömör importok, tab indentáció) az összes forrásfájlban.
-- Pipeline middleware viselkedés finomítva: `undefined`-ot ad vissza, ha nincs illeszkedő middleware.
+- Dependency updates.
+- Zod re-export with `tz` name (`import { tz } from "@atom-forge/rpc"`).
+- Code style unification (concise imports, tab indent) across all source files.
+- Pipeline middleware behavior refined: returns `undefined` if no middleware matches.
 
 ---
 
 ## [0.1.0] - 2025-xx-xx
 
-Kezdeti implementáció: type-safe RPC keretrendszer middleware támogatással, Zod validációval, fájlfeltöltéssel és progress tracking-gel.
+Initial implementation: type-safe RPC framework with middleware support, Zod validation, file uploads and progress tracking.
