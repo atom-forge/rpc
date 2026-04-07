@@ -35,12 +35,12 @@ export class RpcResponse<TSuccess, TError extends RpcErrorObject = never> {
 		return this._status;
 	}
 
-	getResult(): TSuccess | Omit<TError, RpcErrorKey> {
-		return this._result;
+	getResult(): [TError] extends [never] ? TSuccess : TSuccess | Omit<TError, RpcErrorKey> {
+		return this._result as any;
 	}
 
-	get result(): TSuccess | Omit<TError, RpcErrorKey> {
-		return this._result;
+	get result(): [TError] extends [never] ? TSuccess : TSuccess | Omit<TError, RpcErrorKey> {
+		return this._result as any;
 	}
 
 	getCtx(): ClientContext {

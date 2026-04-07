@@ -8,6 +8,9 @@ export type {RpcResponse};
 
 type RpcErrorKey = typeof RPC_ERROR_KEY;
 type RpcErrorShape = {[K in RpcErrorKey]: string};
+
+export type RpcResult<T extends (...args: any[]) => Promise<any>> =
+	Awaited<ReturnType<T>> extends RpcResponse<infer TSuccess, any> ? TSuccess : never;
 type ExtractSuccess<R> = R extends RpcErrorShape ? never : R;
 type ExtractErrors<R> = R extends RpcErrorShape ? R : never;
 
