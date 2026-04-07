@@ -11,10 +11,10 @@ const packr = new Packr({structuredClone: true, useRecords: true});
 const acceptedRequests = ["GET.query", "GET.get", "POST.command"];
 const acceptedMethods = ["GET", "POST"];
 
-export function flattenApiDefinition(
+function flattenApiDefinition(
 	apiDefinition: ApiDefinition<any>,
-): Map<string, {rpcType: string; handler: (ctx: ServerContext<any>) => Promise<any>}> {
-	const map = new Map<string, {rpcType: string; handler: (ctx: ServerContext<any>) => Promise<any>}>();
+): Map<string, {rpcType: string; handler: (ctx: ServerContext) => Promise<any>}> {
+	const map = new Map<string, {rpcType: string; handler: (ctx: ServerContext) => Promise<any>}>();
 
 	function traverse(obj: any, prefix: string, inheritedMiddlewares: ServerMiddleware[]) {
 		const middlewares = [...inheritedMiddlewares, ...getMiddlewares<ServerMiddleware>(obj)];
@@ -25,11 +25,11 @@ export function flattenApiDefinition(
 			if ("rpcType" in value) {
 				const {rpcType, implementation, zodSchema} = value as RpcMethodImplementationDescriptor<any, any, any>;
 				const methodMiddlewares = [...middlewares, ...getMiddlewares<ServerMiddleware>(value)];
-				const handler = (ctx: ServerContext<any>) =>
+				const handler = (ctx: ServerContext) =>
 					pipeline(ctx, ...methodMiddlewares, (ctx) => {
 						let args = ctx.getArgs();
 						if (zodSchema) args = zodSchema.parse(args);
-						return (implementation as (args: any, ctx: ServerContext<any>) => Promise<any>)(args, ctx);
+						return (implementation as (args: any, ctx: ServerContext) => Promise<any>)(args, ctx);
 					});
 				map.set(fullKey, {rpcType, handler});
 			} else {
@@ -42,35 +42,44 @@ export function flattenApiDefinition(
 	return map;
 }
 
+export type RpcHandler = {
+	match(request: Request): boolean;
+	handle(request: Request): Promise<Response>;
+};
+
 /**
- * Creates a framework-agnostic handler function for processing RPC requests.
+ * Creates a handler for processing RPC requests.
  *
- * @param endpointMap - The flattened API endpoint map produced by `flattenApiDefinition`.
+ * @param apiDefinition - The API definition object.
+ * @param prefix - The URL path prefix where the RPC handler is mounted (e.g. `/rpc`).
  * @param options
- * @return An async function that accepts a standard `Request`, route info, and an optional adapter context.
  */
-export function createCoreHandler<TAdapter = unknown>(
-	endpointMap: ReturnType<typeof flattenApiDefinition>,
+export function createHandler(
+	apiDefinition: ApiDefinition<any>,
+	prefix: string,
 	options?: {
-		createServerContext?: (args: any, request: Request, adapterContext: TAdapter) => ServerContext<TAdapter>;
+		createServerContext?: (args: any, request: Request) => ServerContext;
 	},
-): (request: Request, routeInfo: { path: string }, adapterContext?: TAdapter) => Promise<Response> {
+): RpcHandler {
+	const endpointMap = flattenApiDefinition(apiDefinition);
 	const createServerContext =
 		options?.createServerContext ||
-		((args: any, request: Request, adapterContext: TAdapter) =>
-			new ServerContext<TAdapter>(args, request, adapterContext));
+		((args: any, request: Request) => new ServerContext(args, request));
+	const normalizedPrefix = (prefix.startsWith("/") ? prefix : "/" + prefix).replace(/\/$/, "");
 
-	return async function coreHandler(
-		request: Request,
-		routeInfo: { path: string },
-		adapterContext?: TAdapter,
-	): Promise<Response> {
+	function match(request: Request): boolean {
+		return new URL(request.url).pathname.startsWith(normalizedPrefix);
+	}
+
+	async function handle(request: Request): Promise<Response> {
 		if (!acceptedMethods.includes(request.method))
 			return new Response("Method not allowed", {status: 405});
-		if (!routeInfo.path)
+
+		const path = new URL(request.url).pathname.slice(normalizedPrefix.length).replace(/^\//, "");
+		if (!path)
 			return new Response("RPC method not found", {status: 404});
 
-		const entry = endpointMap.get(routeInfo.path);
+		const entry = endpointMap.get(path);
 		if (!entry)
 			return new Response("RPC method not found", {status: 404});
 
@@ -111,7 +120,7 @@ export function createCoreHandler<TAdapter = unknown>(
 			return new Response("Internal server error", {status: 500});
 		}
 
-		const ctx = createServerContext(args, request, adapterContext as TAdapter);
+		const ctx = createServerContext(args, request);
 
 		try {
 			const result = await rpcHandler(ctx);
@@ -128,10 +137,12 @@ export function createCoreHandler<TAdapter = unknown>(
 				{status: 500, headers: {"Content-Type": "application/json"}},
 			);
 		}
-	};
+	}
+
+	return {match, handle};
 }
 
-function makeResponse(result: any, ctx: ServerContext<any>, request: Request): Response {
+function makeResponse(result: any, ctx: ServerContext, request: Request): Response {
 	const prefersJson = request.headers.get("Accept")?.includes("application/json");
 	ctx.headers.response.set("x-atom-forge-rpc-exec-time", `${ctx.elapsedTime}`);
 	ctx.headers.response.set(

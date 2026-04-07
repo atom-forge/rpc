@@ -6,7 +6,7 @@ import {CookieManager} from "../util/cookies.js";
  * It is designed to provide a streamlined interface for interacting with server-side request data.
  * @internal
  */
-export class ServerContext<TAdapter = unknown> {
+export class ServerContext {
 	private _cache: number = 0;
 	private _status: number = 200;
 	private readonly start: number;
@@ -25,7 +25,6 @@ export class ServerContext<TAdapter = unknown> {
 	constructor(
 		args: Record<string, any> | undefined,
 		public readonly request: Request,
-		public readonly adapterContext: TAdapter,
 	) {
 		this.start = performance.now();
 		this.args = new Map(Object.entries(args || {}));

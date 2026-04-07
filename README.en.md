@@ -37,12 +37,11 @@ export const api = {
 
 ```typescript
 // SvelteKit: src/routes/rpc/[...path]/+server.ts
-import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { createHandler } from '@atom-forge/rpc';
 import { api } from '$lib/api';
 
-const handle = createCoreHandler(flattenApiDefinition(api));
-
-export const GET = (event) => handle(event.request, { path: event.params.path }, event);
+const rpc = createHandler(api, '/rpc');
+export const GET = ({ request }) => rpc.handle(request);
 export const POST = GET;
 ```
 
@@ -68,26 +67,18 @@ export default client;
 
 ## Framework Adapters
 
-The `createCoreHandler` function works on standard `Request` → `Response`. Each framework needs ~2–5 lines of adapter code.
+`createHandler` works on standard `Request` → `Response`. Each framework needs ~2–5 lines of adapter code.
 
 ### SvelteKit
 
 ```typescript
 // src/routes/rpc/[...path]/+server.ts
-import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { createHandler } from '@atom-forge/rpc';
 import { api } from '$lib/api';
 
-const handle = createCoreHandler(flattenApiDefinition(api));
-
-export const GET = (event) => handle(event.request, { path: event.params.path }, event);
+const rpc = createHandler(api, '/rpc');
+export const GET = ({ request }) => rpc.handle(request);
 export const POST = GET;
-```
-
-In SvelteKit, `ctx.adapterContext` is the `RequestEvent`, giving access to `locals`, `platform`, etc.:
-
-```typescript
-// ctx.adapterContext type: RequestEvent
-const user = (ctx.adapterContext as RequestEvent).locals.user;
 ```
 
 **Alternative: `hooks.server.ts`**
@@ -96,16 +87,13 @@ Instead of a route file, you can intercept RPC requests directly in the server h
 
 ```typescript
 // src/hooks.server.ts
-import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { createHandler } from '@atom-forge/rpc';
 import { api } from '$lib/api';
 
-const handleRpc = createCoreHandler(flattenApiDefinition(api));
+const rpc = createHandler(api, '/rpc');
 
 export const handle = async ({ event, resolve }) => {
-  if (event.url.pathname.startsWith('/rpc/')) {
-    const path = event.url.pathname.slice('/rpc/'.length);
-    return handleRpc(event.request, { path }, event);
-  }
+  if (rpc.match(event.request)) return rpc.handle(event.request);
   return resolve(event);
 };
 ```
@@ -115,17 +103,18 @@ No route file needed. The hook runs before SvelteKit's router, so it's marginall
 ### Express
 
 ```typescript
-import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { createHandler } from '@atom-forge/rpc';
 import { api } from './api';
 
-const handle = createCoreHandler(flattenApiDefinition(api));
+const rpc = createHandler(api, '/rpc');
 
-app.all('/rpc/:path', async (req, res) => {
+app.use(async (req, res, next) => {
   const request = new Request(
     `${req.protocol}://${req.get('host')}${req.originalUrl}`,
     { method: req.method, headers: req.headers as any, body: req.method !== 'GET' ? req : null }
   );
-  const response = await handle(request, { path: req.params.path }, { req, res });
+  if (!rpc.match(request)) return next();
+  const response = await rpc.handle(request);
   res.status(response.status);
   response.headers.forEach((v, k) => res.setHeader(k, v));
   res.send(Buffer.from(await response.arrayBuffer()));
@@ -135,46 +124,35 @@ app.all('/rpc/:path', async (req, res) => {
 ### Hono
 
 ```typescript
-import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { createHandler } from '@atom-forge/rpc';
 import { api } from './api';
 
-const handle = createCoreHandler(flattenApiDefinition(api));
-
-app.all('/rpc/:path', (c) => handle(c.req.raw, { path: c.req.param('path') }, c));
+const rpc = createHandler(api, '/rpc');
+app.all('/rpc/*', (c) => rpc.handle(c.req.raw));
 ```
 
 ### Next.js (App Router)
 
 ```typescript
 // app/rpc/[...path]/route.ts
-import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
+import { createHandler } from '@atom-forge/rpc';
 import { api } from '@/lib/api';
 
-const handle = createCoreHandler(flattenApiDefinition(api));
-
-export async function GET(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
-  const { path } = await params;
-  return handle(request, { path: path.join('.') }, { request, params });
-}
+const rpc = createHandler(api, '/rpc');
+export const GET = ({ request }: { request: Request }) => rpc.handle(request);
 export const POST = GET;
 ```
-
-> `path.join('.')` reassembles URL segments (`['users', 'get-all']`) into the dot-separated path (`'users.get-all'`). In Next.js 15+, `params` is a Promise — hence the `await`.
 
 ### Nuxt 3
 
 ```typescript
 // server/routes/rpc/[...path].ts
-import { createCoreHandler, flattenApiDefinition } from '@atom-forge/rpc';
-import { getRouterParam, toWebRequest } from 'h3';
+import { createHandler } from '@atom-forge/rpc';
+import { toWebRequest } from 'h3';
 import { api } from '~/lib/api';
 
-const handle = createCoreHandler(flattenApiDefinition(api));
-
-export default defineEventHandler(async (event) => {
-  const path = getRouterParam(event, 'path') ?? '';
-  return handle(toWebRequest(event), { path }, event);
-});
+const rpc = createHandler(api, '/rpc');
+export default defineEventHandler((event) => rpc.handle(toWebRequest(event)));
 ```
 
 > `toWebRequest()` converts the h3 event into a standard `Request`. `defineEventHandler` natively accepts a `Response` return value.
@@ -235,16 +213,33 @@ const result = await client.posts.list.$query({ page: 1 }, {
 });
 ```
 
+### `RpcResult<T>`
+
+A utility type that extracts the success return type from an RPC method. Useful for typing state variables or function return types without manually writing out the full response type.
+
+```typescript
+import type { RpcResult } from '@atom-forge/rpc';
+
+// Preferred: pass the method descriptor object
+type Posts = RpcResult<typeof client.posts.list>;
+
+// Also works: pass the callable directly
+type Posts = RpcResult<typeof client.posts.list.$query>;
+
+// Example with Svelte $state
+let posts = $state<RpcResult<typeof client.posts.list>>([]);
+```
+
 ### `RpcResponse`
 
 Every RPC call returns a `RpcResponse` with these members:
 
 | Member | Description |
 |---|---|
-| `res.isOK()` | `true` if the call succeeded |
+| `res.isOK()` | `true` if the call succeeded — narrows `res.result` to the success type |
 | `res.isError(code?)` | `true` if error; optionally checks a specific code |
 | `res.status` | `'OK'` on success, or the error code string |
-| `res.result` | Typed success data, or error details |
+| `res.result` | `TSuccess` after `isOK()`, full union otherwise |
 | `res.ctx` | The full `ClientContext` for this call |
 
 **Error code format:**
@@ -342,12 +337,12 @@ cfg.$ = loggerMiddleware;
 
 ## Server-side Usage
 
-### `createCoreHandler` and `flattenApiDefinition`
+### `createHandler`
 
-`createCoreHandler` creates a framework-agnostic handler that works on standard `Request` → `Response`. `flattenApiDefinition` prepares the API definition for the handler.
+`createHandler` creates a handler object for processing RPC requests.
 
 ```typescript
-import { createCoreHandler, flattenApiDefinition, rpc } from '@atom-forge/rpc';
+import { createHandler, rpc } from '@atom-forge/rpc';
 
 const api = {
   posts: {
@@ -367,7 +362,9 @@ const api = {
   },
 };
 
-const handle = createCoreHandler(flattenApiDefinition(api));
+const rpcHandler = createHandler(api, '/rpc');
+rpcHandler.match(request); // boolean — does this request belong to this handler?
+rpcHandler.handle(request); // Promise<Response>
 ```
 
 #### Custom Server Context
@@ -375,18 +372,16 @@ const handle = createCoreHandler(flattenApiDefinition(api));
 You can provide a custom server context factory to inject your own properties (e.g. authenticated user) into every handler:
 
 ```typescript
-import { createCoreHandler, flattenApiDefinition, ServerContext } from '@atom-forge/rpc';
-import type { RequestEvent } from '@sveltejs/kit';
+import { createHandler, ServerContext } from '@atom-forge/rpc';
 
-class AppContext extends ServerContext<RequestEvent> {
+class AppContext extends ServerContext {
   get user() {
-    return this.adapterContext.locals.user;
+    return this.env.get('user'); // populated by an auth middleware
   }
 }
 
-const handle = createCoreHandler(flattenApiDefinition(api), {
-  createServerContext: (args, request, adapterContext) =>
-    new AppContext(args, request, adapterContext),
+const rpcHandler = createHandler(api, '/rpc', {
+  createServerContext: (args, request) => new AppContext(args, request),
 });
 ```
 
@@ -425,7 +420,6 @@ Every handler and server-side middleware receives a `ctx` object with the follow
 | Member | Description |
 |---|---|
 | `ctx.request` | The standard Web API `Request` object. |
-| `ctx.adapterContext` | The framework-specific context (SvelteKit: `RequestEvent`, Hono: `Context`, etc.). |
 | `ctx.getArgs()` | Returns all arguments as a plain object. |
 | `ctx.args` | The arguments as a `Map<string, any>`. |
 | `ctx.cookies` | Cookie manager: `get(name)`, `set(name, value, opts?)`, `delete(name, opts?)`, `getAll()`. |
@@ -465,8 +459,7 @@ import { rpc } from '@atom-forge/rpc';
 const api = {
   posts: {
     create: rpc.command(async ({ title }, ctx) => {
-      // SvelteKit: (ctx.adapterContext as RequestEvent).locals.user
-      if (!ctx.adapterContext?.locals?.user) return rpc.error.permissionDenied();
+      if (!ctx.env.get('user')) return rpc.error.permissionDenied();
       if (title.length < 3) return rpc.error.invalidArgument({ message: 'Title too short' });
       // ...
       return { id: 1, title };
@@ -536,20 +529,21 @@ The `makeServerMiddleware` function is used to create server-side middleware. An
 
 ```typescript
 import { makeServerMiddleware } from '@atom-forge/rpc';
-import type { RequestEvent } from '@sveltejs/kit';
 
 const authMiddleware = makeServerMiddleware(
   async (ctx, next) => {
-    const user = (ctx.adapterContext as RequestEvent).locals.user;
+    const token = ctx.cookies.get('session') ?? ctx.headers.request.get('Authorization');
+    const user = await verifyToken(token);
     if (!user) {
       ctx.status.unauthorized();
       return { error: 'Unauthorized' }; // ✅ early return, no next() call needed
     }
+    ctx.env.set('user', user);
     return await next(); // ✅ always return the result of next()
   },
   // Optional accessors attached to the middleware function itself
   {
-    isAdmin: (ctx) => (ctx.adapterContext as RequestEvent).locals.user?.role === 'admin',
+    isAdmin: (ctx) => ctx.env.get('user')?.role === 'admin',
   }
 );
 ```

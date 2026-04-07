@@ -14,8 +14,8 @@ bun add @atom-forge/rpc
 ## Exports
 
 ```typescript
-import { createClient, makeClientMiddleware, clientLogger, RpcResponse } from '@atom-forge/rpc'; // client
-import { createCoreHandler, flattenApiDefinition, rpc, rpcFactory, makeServerMiddleware } from '@atom-forge/rpc'; // server
+import { createClient, makeClientMiddleware, clientLogger, RpcResponse, RpcResult } from '@atom-forge/rpc'; // client
+import { createHandler, rpc, rpcFactory, makeServerMiddleware } from '@atom-forge/rpc'; // server
 import { z } from 'zod'; // install zod as a peer dependency in your project
 ```
 
@@ -50,70 +50,61 @@ rpc.middleware(mw).zod({ ... }).command(...)
 rpc.middleware(mw).on(existingObject)  // attach to any object/group
 ```
 
-### `flattenApiDefinition` + `createCoreHandler`
+### `createHandler`
 
 ```typescript
-const endpointMap = flattenApiDefinition(apiObject);
-
-const handle = createCoreHandler(endpointMap, {
-  createServerContext?: (args, request: Request, adapterContext: TAdapter) => ServerContext<TAdapter>
+const rpc = createHandler(apiObject, '/rpc', {
+  createServerContext?: (args, request: Request) => ServerContext
 });
 
-// handle signature:
-// (request: Request, routeInfo: { path: string }, adapterContext?: TAdapter) => Promise<Response>
+// rpc.match(request: Request): boolean
+// rpc.handle(request: Request): Promise<Response>
 ```
 
 - Accepted HTTP methods: `GET` for `query`/`get`, `POST` for `command`.
 - Accepted `Content-Type` for POST: `application/msgpack` (default), `application/json`, `multipart/form-data`. Unknown → `415`.
-- `adapterContext` is passed through as `ctx.adapterContext` in every handler.
+- The prefix is flexible: `'/rpc'`, `'rpc'`, `'/rpc/'` all work.
 
 ### Framework adapter wiring
 
 **SvelteKit** — route file `src/routes/rpc/[...path]/+server.ts`:
 ```typescript
-const handle = createCoreHandler(flattenApiDefinition(api));
-export const GET = (event) => handle(event.request, { path: event.params.path }, event);
+const rpc = createHandler(api, '/rpc');
+export const GET = ({ request }) => rpc.handle(request);
 export const POST = GET;
-// ctx.adapterContext === RequestEvent
 ```
 
 **SvelteKit** — alternative via `src/hooks.server.ts` (no route file needed):
 ```typescript
-const handleRpc = createCoreHandler(flattenApiDefinition(api));
+const rpc = createHandler(api, '/rpc');
 export const handle = async ({ event, resolve }) => {
-  if (event.url.pathname.startsWith('/rpc/')) {
-    return handleRpc(event.request, { path: event.url.pathname.slice('/rpc/'.length) }, event);
-  }
+  if (rpc.match(event.request)) return rpc.handle(event.request);
   return resolve(event);
 };
 ```
 
 **Next.js App Router** — `app/rpc/[...path]/route.ts`:
 ```typescript
-const handle = createCoreHandler(flattenApiDefinition(api));
-export async function GET(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
-  const { path } = await params;           // params is a Promise in Next.js 15+
-  return handle(request, { path: path.join('.') }, { request, params });
-}
+const rpc = createHandler(api, '/rpc');
+export const GET = ({ request }: { request: Request }) => rpc.handle(request);
 export const POST = GET;
 ```
 
 **Nuxt 3** — `server/routes/rpc/[...path].ts`:
 ```typescript
-import { getRouterParam, toWebRequest } from 'h3';
-const handle = createCoreHandler(flattenApiDefinition(api));
-export default defineEventHandler(async (event) => {
-  return handle(toWebRequest(event), { path: getRouterParam(event, 'path') ?? '' }, event);
-});
+import { toWebRequest } from 'h3';
+const rpc = createHandler(api, '/rpc');
+export default defineEventHandler((event) => rpc.handle(toWebRequest(event)));
 ```
 
 **Express**:
 ```typescript
-const handle = createCoreHandler(flattenApiDefinition(api));
-app.all('/rpc/:path', async (req, res) => {
+const rpc = createHandler(api, '/rpc');
+app.use(async (req, res, next) => {
   const request = new Request(`${req.protocol}://${req.get('host')}${req.originalUrl}`,
     { method: req.method, headers: req.headers as any, body: req.method !== 'GET' ? req : null });
-  const response = await handle(request, { path: req.params.path }, { req, res });
+  if (!rpc.match(request)) return next();
+  const response = await rpc.handle(request);
   res.status(response.status);
   response.headers.forEach((v, k) => res.setHeader(k, v));
   res.send(Buffer.from(await response.arrayBuffer()));
@@ -122,8 +113,8 @@ app.all('/rpc/:path', async (req, res) => {
 
 **Hono**:
 ```typescript
-const handle = createCoreHandler(flattenApiDefinition(api));
-app.all('/rpc/:path', (c) => handle(c.req.raw, { path: c.req.param('path') }, c));
+const rpc = createHandler(api, '/rpc');
+app.all('/rpc/*', (c) => rpc.handle(c.req.raw));
 ```
 
 ### `rpcFactory`
@@ -145,7 +136,7 @@ const mw = makeServerMiddleware(
     // ctx.status.unauthorized(); return { error: '...' };
     return await next(); // ✅ must return
   },
-  { isAdmin: (ctx) => (ctx.adapterContext as RequestEvent).locals.user?.role === 'admin' }
+  { isAdmin: (ctx) => ctx.env.get('user')?.role === 'admin' }
 );
 
 // Accessor functions are attached to the middleware function object itself:
@@ -158,12 +149,11 @@ const api = {
 };
 ```
 
-### `ServerContext<TAdapter>` — `ctx` properties
+### `ServerContext` — `ctx` properties
 
 | Property | Type | Description |
 |---|---|---|
 | `ctx.request` | `Request` | Standard Web API Request object |
-| `ctx.adapterContext` | `TAdapter` | Framework-specific context (e.g. `RequestEvent`, Hono `Context`) |
 | `ctx.args` | `Map<string, any>` | Parsed request arguments |
 | `ctx.getArgs()` | `() => Record<string, any>` | Args as plain object |
 | `ctx.cookies` | `CookieManager` | `get(name)`, `set(name, value, opts?)`, `delete(name, opts?)`, `getAll()` |
@@ -239,14 +229,25 @@ if (res.isOK()) {
 }
 ```
 
+### `RpcResult<T>`
+
+Utility type that extracts the success return type from an RPC method. Accepts either the method descriptor object or the callable function directly.
+
+```typescript
+import type { RpcResult } from '@atom-forge/rpc';
+
+type Posts = RpcResult<typeof client.posts.list>;       // preferred
+type Posts = RpcResult<typeof client.posts.list.$query>; // also works
+```
+
 ### `RpcResponse<TSuccess, TError>`
 
 | Member | Description |
 |---|---|
-| `res.isOK()` | `true` if the call succeeded |
+| `res.isOK()` | `true` if the call succeeded — narrows `res.result` to `TSuccess` |
 | `res.isError(code?)` | `true` if error; optional specific code check |
 | `res.status` / `res.getStatus()` | `'OK'` on success, error code string otherwise |
-| `res.result` / `res.getResult()` | Typed success data or error details |
+| `res.result` / `res.getResult()` | `TSuccess` after `isOK()`, full union otherwise |
 | `res.ctx` / `res.getCtx()` | The full `ClientContext` for this call |
 
 **Error code format:**
