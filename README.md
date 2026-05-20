@@ -4,6 +4,8 @@ Type-safe RPC framework for TypeScript with Zod validation and middleware suppor
 
 ---
 
+---
+
 ## Documentation
 
 - [English Documentation](docs/en/index.md)
