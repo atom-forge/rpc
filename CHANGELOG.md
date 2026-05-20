@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.11] - 2026-05-20
+
+### Added
+
+- **Hungarian documentation** — added a full translation of the documentation in the `docs/hu/` folder.
+
+### Changed
+
+- **Documentation restructuring** — split the monolithic `README.en.md` into multiple smaller markdown files under the `docs/en/` directory for better readability and navigation.
+- **npm package contents** — updated `package.json` to explicitly include the `docs/` folder and root `README` files (`README.md`, `README.en.md`, `README.hu.md`) in the published package.
+
+---
+
 ## [0.3.3] - 2026-03-28
 
 ### Fixed

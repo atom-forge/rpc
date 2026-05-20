@@ -1,6 +1,6 @@
 {
 	"name": "@atom-forge/rpc",
-	"version": "0.3.10",
+	"version": "0.3.11",
 	"description": "Type-safe RPC framework for TypeScript with Zod validation and middleware support",
 	"keywords": [
 		"rpc",
@@ -10,7 +10,10 @@
 		"middleware",
 		"api"
 	],
-	"author": "Gergely Laborci",
+	"author": {
+		"name": "Gergely Laborci",
+		"url": "https://github.com/laborci"
+	},
 	"license": "SEE LICENSE IN LICENSE",
 	"type": "module",
 	"main": "dist/index.js",
@@ -27,7 +30,9 @@
 	"files": [
 		"dist",
 		"LICENSE",
-		"CHANGELOG.md"
+		"CHANGELOG.md",
+		"README.md",
+		"docs"
 	],
 	"scripts": {
 		"build": "tsc",
