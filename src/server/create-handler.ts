@@ -13,8 +13,8 @@ const acceptedMethods = ["GET", "POST"];
 
 function flattenApiDefinition(
 	apiDefinition: ApiDefinition<any>,
-): Map<string, {rpcType: string; handler: (ctx: ServerContext) => Promise<any>}> {
-	const map = new Map<string, {rpcType: string; handler: (ctx: ServerContext) => Promise<any>}>();
+): Map<string, { rpcType: string; handler: (ctx: ServerContext) => Promise<any> }> {
+	const map = new Map<string, { rpcType: string; handler: (ctx: ServerContext) => Promise<any> }>();
 
 	function traverse(obj: any, prefix: string, inheritedMiddlewares: ServerMiddleware[]) {
 		const middlewares = [...inheritedMiddlewares, ...getMiddlewares<ServerMiddleware>(obj)];
@@ -250,4 +250,5 @@ async function parseCommandMultipartFormData(request: Request): Promise<Record<s
 	return args;
 }
 
-class ParseError extends Error {}
+class ParseError extends Error {
+}

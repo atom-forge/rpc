@@ -9,15 +9,17 @@ yarn add @atom-forge/rpc
 bun add @atom-forge/rpc
 ```
 
+---
+
 ## Documentation
 
-- [English](README.en.md)
-- [Hungarian](README.hu.md)
-- [LLM Reference](README.llm.md)
+- [English Documentation](docs/en/index.md)
+- [Hungarian Documentation](docs/hu/index.md)
+- [LLM Reference](docs/llm/index.md)
 
 ## License
 
-AtomForge — Patron License. Copyright (c) 2024-present Elvis Szabo.
+AtomForge — Patron License. Copyright (c) 2026-present Gergely Laborci.
 
 - **Non-commercial use** (personal projects, open source, non-profits): free of charge.
 - **Commercial use** (for-profit, SaaS, client work): requires an active [GitHub Sponsors](https://github.com/sponsors/atom-forge) subscription. The license is perpetual for projects started during the active support period.
