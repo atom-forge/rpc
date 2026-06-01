@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.14] - 2026-06-01
+
+### Changed
+
+- **`prepublishOnly` release flow** — removed the legacy prepublish automation script and limited publish-time work to a plain build so GitHub Actions trusted publishing can run without npm login, version bumping, or git mutations.
+
+---
+
 ## [0.3.13] - 2026-06-01
 
 ### Added
