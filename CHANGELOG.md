@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.13] - 2026-06-01
+
+### Added
+
+- **npm publish workflow** — added a GitHub Actions workflow that publishes the package to npm on `v*` tag pushes using trusted publishing.
+
+---
+
 ## [0.3.11] - 2026-05-20
 
 ### Added
