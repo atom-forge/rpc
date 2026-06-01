@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.15] - 2026-06-01
+
+### Changed
+
+- **npm publish workflow** — switched the GitHub Actions release job to the explicit Node 24 + Bun build + `npm publish --ignore-scripts` flow to better match npm trusted publishing recommendations and avoid implicit script behavior during CI release runs.
+
+---
+
 ## [0.3.14] - 2026-06-01
 
 ### Changed
