@@ -54,7 +54,7 @@ export class ClientContext<RESULT = any> {
 		this.rpcType = rpcType;
 		this.path = path;
 		this.args = new Map(Object.entries(args || {}));
-		const _headers = options.headers ? options.headers : new Headers();
+		const _headers = new Headers(options.headers);
 		_headers.set("accept", "application/msgpack");
 		this.request = {
 			get headers() {

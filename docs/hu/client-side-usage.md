@@ -36,6 +36,30 @@ const result = await client.posts.list.$query({page: 1}, {
 });
 ```
 
+## Request építés
+
+Minden RPC metóduson elérhető egy `.request(args, options?)` segédfüggvény is. Ez olyan Web API `Request` objektumot épít, amely ugyanazt az URL-t, methodot, headereket és body kódolást használja, mint a normál kliens hívás, de nem indít hálózati kérést.
+
+Ez olyan teszteknél hasznos, ahol a valódi RPC handlert szeretnéd futtatni HTTP szerver indítása nélkül:
+
+```typescript
+const [client] = createClient<typeof api>('/rpc');
+const handler = createHandler(api, '/rpc');
+
+const request = client.posts.create.$command.request(
+	{title: 'Hello'},
+	{
+		headers: {
+			cookie: 'session=test-session',
+		},
+	}
+);
+
+const response = await handler.handle(request);
+```
+
+A `.request()` nem futtat kliens middleware-eket. Teszthez szükséges headereket vagy cookie-kat az `options.headers` mezőn keresztül adj át.
+
 ## `RpcResult<T>`
 
 Egy segédtípus (utility type), amely kinyeri a sikeres visszatérési típust egy RPC metódusból. Hasznos állapot (state) változók vagy függvény visszatérési típusok típusozásához anélkül, hogy manuálisan ki kellene írni a teljes válasz (response) típust.

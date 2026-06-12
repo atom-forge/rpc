@@ -36,6 +36,30 @@ const result = await client.posts.list.$query({page: 1}, {
 });
 ```
 
+## Building Requests
+
+Every RPC method also has a `.request(args, options?)` helper. It builds a Web API `Request` object with the same URL, method, headers, and body encoding as the normal client call, but does not perform a network call.
+
+This is useful for tests that should exercise the real RPC handler without starting an HTTP server:
+
+```typescript
+const [client] = createClient<typeof api>('/rpc');
+const handler = createHandler(api, '/rpc');
+
+const request = client.posts.create.$command.request(
+	{title: 'Hello'},
+	{
+		headers: {
+			cookie: 'session=test-session',
+		},
+	}
+);
+
+const response = await handler.handle(request);
+```
+
+Client middlewares are not executed by `.request()`. Pass any test headers or cookies through `options.headers`.
+
 ## `RpcResult<T>`
 
 A utility type that extracts the success return type from an RPC method. Useful for typing state variables or function return types without manually writing out the full response type.

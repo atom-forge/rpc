@@ -37,7 +37,9 @@
 	"scripts": {
 		"build": "tsc",
 		"prepublishOnly": "bun run build",
-		"release": "npm publish --access public"
+		"release": "npm publish --access public",
+		"pub-check": "bun run scripts/pub-check.ts",
+		"pub": "bun run scripts/pub.ts"
 	},
 	"dependencies": {
 		"msgpackr": "^1.11.8"

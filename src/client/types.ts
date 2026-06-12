@@ -76,7 +76,7 @@ export type CallOptions = {
 	 * to be sent with the request. It can include custom headers
 	 * and standard headers to define how the request should be processed.
 	 */
-	headers?: Headers;
+	headers?: HeadersInit;
 };
 
 /** A type that can be either a single middleware or an array of them. */
@@ -178,15 +178,20 @@ type GetRpcType<T> = T extends RpcMethodDescriptor ? T["rpcType"] : never;
 /**
  *  Describes the callable method that the proxy returns.
  */
+type RpcCallable<ARGS, TSuccess, TError extends RpcErrorShape> = {
+	(args: ARGS, options?: CallOptions): Promise<RpcResponse<TSuccess, TError>>;
+	request(args: ARGS, options?: CallOptions): Request;
+};
+
 type CallableRpcMethod<
 	ARGS,
 	TSuccess,
 	TError extends RpcErrorShape,
 	Type extends "query" | "command" | "get",
 > = Type extends "command"
-	? {$command: (args: ARGS, options?: CallOptions) => Promise<RpcResponse<TSuccess, TError>>}
+	? {$command: RpcCallable<ARGS, TSuccess, TError>}
 	: Type extends "query"
-		? {$query: (args: ARGS, options?: CallOptions) => Promise<RpcResponse<TSuccess, TError>>}
+		? {$query: RpcCallable<ARGS, TSuccess, TError>}
 		: Type extends "get"
-			? {$get: (args: ARGS, options?: CallOptions) => Promise<RpcResponse<TSuccess, TError>>}
+			? {$get: RpcCallable<ARGS, TSuccess, TError>}
 			: never;

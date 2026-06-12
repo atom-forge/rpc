@@ -13,6 +13,15 @@ const rpcMethodTypeMap = {
     $get: "get",
 };
 const packr = new Packr({structuredClone: true, useRecords: true});
+type RpcType = "command" | "query" | "get";
+type RequestType = "GET" | "QUERY" | "UPLOAD" | "COMMAND";
+type BuiltRequest = {
+    request: Request;
+    url: URL;
+    method: "GET" | "POST";
+    body: BodyInit | null;
+    headers: Headers;
+};
 
 /**
  * Creates an API client and a corresponding middleware configuration object.
@@ -59,8 +68,8 @@ export function createClient<T>(
                     if (isResultRequested) {
                         const rpcType = rpcMethodTypeMap[
                             prop as keyof typeof rpcMethodTypeMap
-                            ] as "command" | "query" | "get";
-                        return async (args: any, options: CallOptions = {}) => {
+                            ] as RpcType;
+                        const invoke = async (args: any, options: CallOptions = {}) => {
                             const ctx = new ClientContext(
                                 pathSegments,
                                 args,
@@ -87,6 +96,12 @@ export function createClient<T>(
                             rpcResponse._attachCtx(ctx);
                             return rpcResponse;
                         };
+                        invoke.request = (args: any, options: CallOptions = {}) =>
+                            buildRequest(
+                                baseUrl,
+                                new ClientContext(pathSegments, args, rpcType, options),
+                            ).request;
+                        return invoke;
                     }
 
                     return createRecursiveProxy([...pathSegments, prop]);
@@ -102,6 +117,29 @@ export function createClient<T>(
 }
 
 async function call(baseUrl: string, ctx: ClientContext): Promise<RpcResponse<any, any>> {
+    const {request, url, method, body, headers} = buildRequest(baseUrl, ctx);
+    const onProgress = ctx.onProgress;
+    const hasProgress = !!onProgress;
+    const signal = ctx.abortSignal;
+
+    let response: Response;
+    try {
+        response = hasProgress
+            ? await fetchWithXhr(url, method, body, headers, onProgress, signal)
+            : await fetch(request, {
+                credentials: "include",
+                window: null,
+            });
+    } catch (e) {
+        return RpcResponse.error("NETWORK_ERROR", {message: (e as Error).message});
+    }
+
+    (ctx as WritableClientContext)._response = response;
+
+    return decodeResponse(response);
+}
+
+function buildRequest(baseUrl: string, ctx: ClientContext): BuiltRequest {
     const args = ctx.args;
     const uploads = new Map<string, File | File[]>();
 
@@ -123,19 +161,9 @@ async function call(baseUrl: string, ctx: ClientContext): Promise<RpcResponse<an
 
     const hasUploads = !!uploads.size;
     const pathString = ctx.path.map(camelToKebabCase).join(".");
-    const url =
-        typeof window !== "undefined" && typeof window.document !== "undefined"
-            ? new URL(
-                `${baseUrl}/${pathString}`,
-                window ? window.location.origin : undefined,
-            )
-            : new URL(`${baseUrl}/${pathString}`);
-
-    const onProgress = ctx.onProgress;
-    const hasProgress = !!onProgress;
-    const signal = ctx.abortSignal;
+    const url = createRpcUrl(baseUrl, pathString);
     const headers = ctx.request.headers;
-    const requestType: "GET" | "QUERY" | "UPLOAD" | "COMMAND" = isGet
+    const requestType: RequestType = isGet
         ? "GET"
         : isQuery
             ? "QUERY"
@@ -192,23 +220,21 @@ async function call(baseUrl: string, ctx: ClientContext): Promise<RpcResponse<an
             break;
     }
 
-    let response: Response;
-    try {
-        response = hasProgress
-            ? await fetchWithXhr(url, method, body, headers, onProgress, signal)
-            : await fetch(url, {
-                method,
-                headers,
-                body,
-                signal,
-                credentials: "include",
-                window: null,
-            });
-    } catch (e) {
-        return RpcResponse.error("NETWORK_ERROR", {message: (e as Error).message});
-    }
+    return {
+        request: new Request(url, {
+            method,
+            headers,
+            body,
+            signal: ctx.abortSignal,
+        }),
+        url,
+        method,
+        body,
+        headers,
+    };
+}
 
-    (ctx as WritableClientContext)._response = response;
+async function decodeResponse(response: Response): Promise<RpcResponse<any, any>> {
 
     const buffer = await response.arrayBuffer();
 
@@ -239,6 +265,16 @@ async function call(baseUrl: string, ctx: ClientContext): Promise<RpcResponse<an
     }
 
     return RpcResponse.ok(unpacked);
+}
+
+function createRpcUrl(baseUrl: string, pathString: string): URL {
+    const base = baseUrl.replace(/\/$/, "");
+    const path = pathString ? `${base}/${pathString}` : base;
+    const origin =
+        typeof window !== "undefined" && typeof window.document !== "undefined"
+            ? window.location.origin
+            : "http://localhost";
+    return new URL(path, origin);
 }
 
 /**

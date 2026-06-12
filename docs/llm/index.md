@@ -229,6 +229,16 @@ if (res.isOK()) {
 }
 ```
 
+Build a raw Web API `Request` without sending it. This is useful for in-process tests with `createHandler(...).handle(request)` and no HTTP server. Client middlewares are not executed by `.request()`; pass test headers or cookies through `options.headers`.
+
+```typescript
+const request = client.posts.create.$command.request(
+  { title: 'Hello' },
+  { headers: { cookie: 'session=test-session' } }
+);
+const response = await handler.handle(request);
+```
+
 ### `RpcResult<T>`
 
 Utility type that extracts the success return type from an RPC method. Accepts either the method descriptor object or the callable function directly.
