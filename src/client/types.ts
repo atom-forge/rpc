@@ -181,6 +181,12 @@ type GetRpcType<T> = T extends RpcMethodDescriptor ? T["rpcType"] : never;
 type RpcCallable<ARGS, TSuccess, TError extends RpcErrorShape> = {
 	(args: ARGS, options?: CallOptions): Promise<RpcResponse<TSuccess, TError>>;
 	request(args: ARGS, options?: CallOptions): Request;
+	response(response: Response): Promise<RpcResponse<TSuccess, TError>>;
+	handle(
+		handler: { handle(request: Request): Promise<Response> } | ((request: Request) => Promise<Response>),
+		args: ARGS,
+		options?: CallOptions,
+	): Promise<RpcResponse<TSuccess, TError>>;
 };
 
 type CallableRpcMethod<

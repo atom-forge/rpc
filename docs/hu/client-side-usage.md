@@ -60,6 +60,30 @@ const response = await handler.handle(request);
 
 A `.request()` nem futtat kliens middleware-eket. Teszthez szükséges headereket vagy cookie-kat az `options.headers` mezőn keresztül adj át.
 
+Ha a dekódolt `RpcResponse` kell, használd a `.response(response)` metódust:
+
+```typescript
+const rpcResponse = await client.posts.create.$command.response(response);
+```
+
+A gyakori in-process tesztesetre a `.handle(handler, args, options?)` felépíti a requestet, meghívja a handlert, és dekódolja a választ:
+
+```typescript
+const res = await client.posts.create.$command.handle(
+	handler,
+	{title: 'Hello'},
+	{
+		headers: {
+			cookie: 'session=test-session',
+		},
+	}
+);
+
+if (res.isOK()) {
+	console.log(res.result);
+}
+```
+
 ## `RpcResult<T>`
 
 Egy segédtípus (utility type), amely kinyeri a sikeres visszatérési típust egy RPC metódusból. Hasznos állapot (state) változók vagy függvény visszatérési típusok típusozásához anélkül, hogy manuálisan ki kellene írni a teljes válasz (response) típust.

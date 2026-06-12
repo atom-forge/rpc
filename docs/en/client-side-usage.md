@@ -60,6 +60,30 @@ const response = await handler.handle(request);
 
 Client middlewares are not executed by `.request()`. Pass any test headers or cookies through `options.headers`.
 
+If you want the decoded `RpcResponse`, use `.response(response)`:
+
+```typescript
+const rpcResponse = await client.posts.create.$command.response(response);
+```
+
+For the common in-process test case, `.handle(handler, args, options?)` builds the request, calls the handler, and decodes the response:
+
+```typescript
+const res = await client.posts.create.$command.handle(
+	handler,
+	{title: 'Hello'},
+	{
+		headers: {
+			cookie: 'session=test-session',
+		},
+	}
+);
+
+if (res.isOK()) {
+	console.log(res.result);
+}
+```
+
 ## `RpcResult<T>`
 
 A utility type that extracts the success return type from an RPC method. Useful for typing state variables or function return types without manually writing out the full response type.

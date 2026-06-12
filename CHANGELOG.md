@@ -5,6 +5,7 @@
 ### Added
 
 - Add `.request(args, options?)` to client RPC methods for in-process handler tests without an HTTP server.
+- Add `.response(response)` and `.handle(handler, args, options?)` helpers for decoded in-process test responses.
 
 ---
 

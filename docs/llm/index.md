@@ -239,6 +239,22 @@ const request = client.posts.create.$command.request(
 const response = await handler.handle(request);
 ```
 
+Decode a raw `Response` into `RpcResponse`:
+
+```typescript
+const rpcResponse = await client.posts.create.$command.response(response);
+```
+
+Build the request, call an in-process handler, and decode the response in one step:
+
+```typescript
+const res = await client.posts.create.$command.handle(
+  handler,
+  { title: 'Hello' },
+  { headers: { cookie: 'session=test-session' } }
+);
+```
+
 ### `RpcResult<T>`
 
 Utility type that extracts the success return type from an RPC method. Accepts either the method descriptor object or the callable function directly.

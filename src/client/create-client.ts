@@ -101,6 +101,23 @@ export function createClient<T>(
                                 baseUrl,
                                 new ClientContext(pathSegments, args, rpcType, options),
                             ).request;
+                        invoke.response = (response: Response) => decodeResponse(response);
+                        invoke.handle = async (
+                            handler: { handle(request: Request): Promise<Response> } | ((request: Request) => Promise<Response>),
+                            args: any,
+                            options: CallOptions = {},
+                        ) => {
+                            const ctx = new ClientContext(pathSegments, args, rpcType, options);
+                            const {request} = buildRequest(baseUrl, ctx);
+                            const response =
+                                typeof handler === "function"
+                                    ? await handler(request)
+                                    : await handler.handle(request);
+                            (ctx as WritableClientContext)._response = response;
+                            const rpcResponse = await decodeResponse(response);
+                            rpcResponse._attachCtx(ctx);
+                            return rpcResponse;
+                        };
                         return invoke;
                     }
 
