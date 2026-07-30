@@ -4,6 +4,14 @@
 
 ---
 
+## [0.3.17] - 2026-07-30
+
+### Changed
+
+- **Client logger** — RPC-hívásonként külön gyűjti és egyben írja ki a böngészős logot; a fejléc típust, HTTP- és RPC-státuszt, valamint szerver- és kliensidőt mutat.
+
+---
+
 ## [0.3.16] - 2026-07-30
 
 ### Added
