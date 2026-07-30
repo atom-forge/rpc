@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+---
+
+## [0.3.16] - 2026-07-30
+
 ### Added
 
 - Add `.request(args, options?)` to client RPC methods for in-process handler tests without an HTTP server.
