@@ -32,6 +32,7 @@
 		"LICENSE",
 		"CHANGELOG.md",
 		"README.md",
+		"README-AI.md",
 		"docs"
 	],
 	"scripts": {

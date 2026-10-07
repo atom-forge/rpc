@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Replace `docs/llm/index.md` with a root-level `README-AI.md` covering essential usage rules, server/client examples, and links to detailed English documentation; update the README link and include the guide in the published npm package.
+
 ---
 
 ## [0.3.18] - 2026-07-30

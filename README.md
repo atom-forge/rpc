@@ -10,7 +10,7 @@ Type-safe RPC framework for TypeScript with Zod validation and middleware suppor
 
 - [English Documentation](docs/en/index.md)
 - [Hungarian Documentation](docs/hu/index.md)
-- [LLM Reference](docs/llm/index.md)
+- [AI Usage Guide](README-AI.md)
 
 ## License
 
