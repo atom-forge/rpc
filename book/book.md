@@ -12,6 +12,7 @@ children:
   - "[[client-side-usage.md]]"
   - "[[framework-adapters.md]]"
   - "[[communication-protocol.md]]"
+  - "[AI Notes](ai-notes.md)"
 ---
 # Rpc — Type-safe APIs with TypeScript
 
