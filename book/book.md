@@ -1,5 +1,5 @@
 ---
-name: RPC
+title: RPC
 subtitle: "@atom-forge/rpc"
 id: atom-forge-rpc
 language: en
