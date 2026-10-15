@@ -3,7 +3,7 @@ name: RPC
 subtitle: "@atom-forge/rpc"
 id: atom-forge-rpc
 language: en
-author: Gergely Laborci
+author: AtomForge
 tags: [typescript, rpc, web-development]
 intro: "Build end-to-end type-safe APIs with @atom-forge/rpc: server endpoints, typed clients, validation, middleware, framework integration, and the wire protocol."
 children:
