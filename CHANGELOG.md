@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add a self-contained English BookMD book in `book/`, with a front page, ordered chapters adapted from the documentation, metadata for navigation and external inclusion, Mermaid diagrams for type sharing and the request/response lifecycle, callouts highlighting validation, error handling, middleware returns, and content negotiation, and practical explanations around examples and integration choices.
+
 ---
 
 ## [0.3.19] - 2026-10-07
