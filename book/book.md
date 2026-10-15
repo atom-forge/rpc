@@ -1,5 +1,6 @@
 ---
-name: "Rpc — Type-safe APIs with TypeScript"
+name: RPC
+subtitle: "@atom-forge/rpc"
 id: atom-forge-rpc
 language: en
 author: Gergely Laborci
